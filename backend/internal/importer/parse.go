@@ -118,3 +118,27 @@ func totalRow(row []string) bool {
 	}
 	return false
 }
+
+func containsMonth(months []string, month string) bool {
+	for _, m := range months {
+		if m == month {
+			return true
+		}
+	}
+	return false
+}
+
+func monthlySubheader(row []string, months map[int]string) bool {
+	found := false
+	for col := range months {
+		s := normalize(cell(row, col))
+		if s == "" {
+			continue
+		}
+		if s != "количество" && s != "нач. остаток" {
+			return false
+		}
+		found = true
+	}
+	return found
+}

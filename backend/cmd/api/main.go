@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/recommendation"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/service"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/store"
 	httptransport "github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/transport/http"
@@ -26,7 +27,16 @@ func main() {
 	if origins == "" {
 		origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
 	}
-	svc := &service.Service{Store: store.New()}
+	aiURL := os.Getenv("AI_SERVICE_URL")
+	if aiURL == "" {
+		aiURL = "http://127.0.0.1:8001"
+	}
+	client, err := recommendation.NewClient(aiURL)
+	if err != nil {
+		logger.Error("invalid_ai_service_url", "error", err)
+		os.Exit(1)
+	}
+	svc := &service.Service{Store: store.New(), Recommender: client}
 	server := &http.Server{Addr: address, Handler: httptransport.New(svc, logger, strings.Split(origins, ",")), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

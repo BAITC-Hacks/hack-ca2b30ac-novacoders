@@ -39,15 +39,23 @@ var schemas = map[string]map[string][]string{
 }
 
 type header struct {
-	sheet    string
-	row      int
-	columns  map[string]int
-	months   map[int]string
-	date1904 bool
+	sheet          string
+	row            int
+	columns        map[string]int
+	months         map[int]string
+	date1904       bool
+	transitColumns []int
 }
 
 func Import(ctx context.Context, files map[string]io.Reader) (*domain.Dataset, error) {
-	d := &domain.Dataset{AsOf: domain.DatasetDate(), Products: map[string]*domain.Product{}, Seasonality: map[int]float64{}, Diagnostics: domain.ImportDiagnostics{ProcessedRows: map[string]int{}, SkippedTotalRows: map[string]int{}, ProductsWithoutMOQ: []string{}, ProductsWithoutSales: []string{}, ProductsWithoutCurrentStock: []string{}, SourceConflicts: []domain.Diagnostic{}, Warnings: []domain.Diagnostic{}, Errors: []domain.Diagnostic{}}}
+	return ImportSupplier(ctx, files, domain.Supplier)
+}
+
+func ImportSupplier(ctx context.Context, files map[string]io.Reader, supplier string) (*domain.Dataset, error) {
+	if supplier != domain.Supplier && supplier != "IEK" {
+		return nil, &ValidationError{Diagnostics: domain.ImportDiagnostics{Errors: []domain.Diagnostic{{Code: "INVALID_SUPPLIER", Message: "supplier: SystemElectric или IEK"}}}}
+	}
+	d := &domain.Dataset{Supplier: supplier, SourceFiles: map[string]string{}, AsOf: domain.DatasetDate(), Products: map[string]*domain.Product{}, Seasonality: map[int]float64{}, Diagnostics: domain.ImportDiagnostics{ProcessedRows: map[string]int{}, SkippedTotalRows: map[string]int{}, ProductsWithoutMOQ: []string{}, ProductsWithoutSales: []string{}, ProductsWithoutCurrentStock: []string{}, SourceConflicts: []domain.Diagnostic{}, Warnings: []domain.Diagnostic{}, Errors: []domain.Diagnostic{}}}
 	d.Diagnostics.Warnings = append(d.Diagnostics.Warnings, domain.Diagnostic{Code: "PARTIAL_CURRENT_MONTH", Message: "Сентябрь 2026 исключён из полных месяцев; расчётный период: сентябрь 2025 — август 2026."})
 	fatal := false
 	for _, field := range Fields {
@@ -94,7 +102,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		return errors.New("Не удалось открыть XLSX или превышен лимит распаковки 128 MiB.")
 	}
 	defer f.Close()
-	h, err := findHeader(ctx, f, field)
+	h, err := findHeader(ctx, f, field, d.Supplier)
 	if err != nil {
 		return err
 	}
@@ -103,9 +111,19 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		return errors.New("Не удалось прочитать лист.")
 	}
 	defer rows.Close()
+	// Read numeric cells without display formatting (e.g. 1,220.00) while
+	// retaining displayed codes, including their leading-zero number formats.
+	rawRows, err := f.Rows(h.sheet)
+	if err != nil {
+		return errors.New("Не удалось прочитать значения листа.")
+	}
+	defer rawRows.Close()
 	seen := map[string]bool{}
 	rowNumber := 0
 	for rows.Next() {
+		if !rawRows.Next() {
+			return errors.New("Не удалось прочитать значения строки.")
+		}
 		rowNumber++
 		if rowNumber > maxRows {
 			return fmt.Errorf("Лист превышает лимит %d строк.", maxRows)
@@ -120,11 +138,22 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		if err != nil {
 			return errors.New("Не удалось прочитать строку листа.")
 		}
+		raw, err := rawRows.Columns(excelize.Options{RawCellValue: true})
+		if err != nil {
+			return errors.New("Не удалось прочитать значения строки.")
+		}
 		if strings.TrimSpace(strings.Join(row, "")) == "" {
 			continue
 		}
 		if totalRow(row) {
 			d.Diagnostics.SkippedTotalRows[field]++
+			if field == "seasonality" && len(d.Seasonality) > 0 {
+				break
+			}
+			continue
+		}
+		// Monthly reports have one or two descriptive rows below the header.
+		if (field == "monthly_sales" || field == "monthly_stock") && cell(row, h.columns["code"]) == "" && monthlySubheader(row, h.months) {
 			continue
 		}
 		d.Diagnostics.ProcessedRows[field]++
@@ -139,7 +168,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 					month, _ = strconv.Atoi(key[5:])
 				}
 			}
-			value, ok, err := number(cell(row, h.columns["factor"]))
+			value, ok, err := number(cell(raw, h.columns["factor"]))
 			if month == 0 || err != nil || !ok || value <= 0 || value > 10 {
 				d.Diagnostics.Errors = append(d.Diagnostics.Errors, issue("INVALID_SEASONALITY", "Некорректный месяц или коэффициент (допустимо 0 < k ≤ 10).", "", false))
 				continue
@@ -159,11 +188,14 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		}
 		p := d.Products[code]
 		if p == nil {
-			p = &domain.Product{Code1C: code, Supplier: domain.Supplier, MonthlySales: map[string]float64{}, MonthlyStock: map[string]*float64{}, BlankSalesMonths: []string{}, Transactions: []domain.Transaction{}, Sources: map[string]bool{}, PresentFields: map[string]bool{}, Warnings: []domain.Diagnostic{}}
+			p = &domain.Product{Code1C: code, Supplier: d.Supplier, MonthlySales: map[string]float64{}, MonthlyStock: map[string]*float64{}, BlankSalesMonths: []string{}, Transactions: []domain.Transaction{}, Sources: map[string]bool{}, PresentFields: map[string]bool{}, Warnings: []domain.Diagnostic{}}
 			d.Products[code] = p
 		}
 		p.Sources[field] = true
-		if seen[code] && field != "sales_transactions" {
+		if seen[code] && (field == "monthly_sales" || field == "monthly_stock") {
+			d.Diagnostics.Warnings = append(d.Diagnostics.Warnings, issue("MONTHLY_ROWS_MERGED", "Повторные месячные строки объединены; неизвестная часть суммы сохраняется как null.", code, false))
+		}
+		if seen[code] && field != "sales_transactions" && field != "monthly_sales" && field != "monthly_stock" {
 			w := issue("DUPLICATE_PRODUCT_ROW", "Повторная строка товара пропущена; требуется проверка, значения не суммируются.", code, true)
 			d.Diagnostics.Errors = append(d.Diagnostics.Errors, w)
 			p.Warnings = append(p.Warnings, w)
@@ -198,7 +230,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		}
 		switch field {
 		case "moq":
-			v, ok, err := number(cell(row, h.columns["multiple"]))
+			v, ok, err := number(cell(raw, h.columns["multiple"]))
 			if err != nil || (ok && (v <= 0 || v != math.Trunc(v) || v > 1e9)) {
 				bad("Некорректная кратность поставки.")
 			} else if ok {
@@ -212,22 +244,31 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			sort.Ints(cols)
 			for _, col := range cols {
 				month := h.months[col]
-				v, ok, err := number(cell(row, col))
+				v, ok, err := number(cell(raw, col))
 				if err != nil {
 					bad("Некорректное число за " + month + ".")
-					continue
+					ok = false
 				}
 				if field == "monthly_sales" {
 					if ok {
-						p.MonthlySales[month] = v
+						if !containsMonth(p.BlankSalesMonths, month) {
+							p.MonthlySales[month] += v
+						}
 					} else {
-						p.BlankSalesMonths = append(p.BlankSalesMonths, month)
+						delete(p.MonthlySales, month)
+						if !containsMonth(p.BlankSalesMonths, month) {
+							p.BlankSalesMonths = append(p.BlankSalesMonths, month)
+						}
 					}
 				} else {
-					p.MonthlyStock[month] = nil
-					if ok {
-						value := v
-						p.MonthlyStock[month] = &value
+					old, exists := p.MonthlyStock[month]
+					if !ok || (exists && old == nil) {
+						p.MonthlyStock[month] = nil
+					} else {
+						if old != nil {
+							v += *old
+						}
+						p.MonthlyStock[month] = &v
 					}
 				}
 			}
@@ -245,10 +286,13 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 				bad("Некорректная дата операции или дата позже среза 22.09.2026.")
 				continue
 			}
-			quantity, ok, err := number(cell(row, h.columns["quantity"]))
-			if err != nil || !ok {
-				bad("Некорректное или пустое количество операции.")
+			quantity, ok, err := number(cell(raw, h.columns["quantity"]))
+			if err != nil {
+				bad("Некорректное количество операции.")
 				continue
+			}
+			if !ok {
+				warn("UNKNOWN_TRANSACTION_QUANTITY", "Количество операции отсутствует; передаётся как null.", true)
 			}
 			doc := cell(row, h.columns["number"])
 			if doc == "" {
@@ -257,13 +301,39 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			if doc == "" {
 				warn("MISSING_DOCUMENT_ID", "Операция без документа сохранена, но не участвует в поиске аномалий.", true)
 			}
-			p.Transactions = append(p.Transactions, domain.Transaction{Date: date, DocumentID: doc, Warehouse: cell(row, h.columns["warehouse"]), Quantity: quantity})
+			p.Transactions = append(p.Transactions, domain.Transaction{Date: date, DocumentID: doc, Warehouse: cell(row, h.columns["warehouse"]), Quantity: quantity, QuantityMissing: !ok})
 		case "in_transit":
+			if len(h.transitColumns) > 0 {
+				// A blank shipment cell is unknown. Preserve that uncertainty for
+				// the aggregate instead of silently converting it to zero.
+				total, complete := 0.0, true
+				for _, col := range h.transitColumns {
+					v, ok, err := number(cell(raw, col))
+					if err != nil {
+						bad("Некорректное количество партии в пути.")
+					}
+					if !ok || err != nil {
+						complete = false
+					} else {
+						total += v
+					}
+				}
+				if complete {
+					p.InTransit = total
+					p.PresentFields["inTransit"] = true
+				} else {
+					warn("INCOMPLETE_TRANSIT", fmt.Sprintf("Общий товар в пути неизвестен: есть пустые партии. Сумма известных партий: %g.", total), true)
+				}
+			}
 			for _, attr := range []struct {
 				key    string
 				target *float64
 			}{{"showcaseStock", &p.ShowcaseStock}, {"tzStock", &p.TZStock}, {"retailStock", &p.RetailStock}, {"totalStock", &p.TotalStock}, {"reservedStock", &p.ReservedStock}, {"freeStock", &p.FreeStock}, {"inTransit", &p.InTransit}} {
-				v, ok, err := number(cell(row, h.columns[attr.key]))
+				col, exists := h.columns[attr.key]
+				if !exists {
+					continue
+				}
+				v, ok, err := number(cell(raw, col))
 				if err != nil {
 					bad("Некорректный остаток: " + attr.key)
 					continue
@@ -273,7 +343,11 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 					p.PresentFields[attr.key] = true
 				}
 			}
-			v, ok, err := number(cell(row, h.columns["unitCost"]))
+			col, exists := h.columns["unitCost"]
+			if !exists {
+				continue
+			}
+			v, ok, err := number(cell(raw, col))
 			if err != nil {
 				warn("INVALID_UNIT_COST", "Некорректная себестоимость; оценка стоимости недоступна.", false)
 			} else if ok {
@@ -284,10 +358,24 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 	if err := rows.Error(); err != nil {
 		return errors.New("Ошибка чтения листа.")
 	}
+	if err := rawRows.Error(); err != nil {
+		return errors.New("Ошибка чтения значений листа.")
+	}
 	return nil
 }
 
-func findHeader(ctx context.Context, f *excelize.File, field string) (header, error) {
+func findHeader(ctx context.Context, f *excelize.File, field string, supplier string) (header, error) {
+	schema := schemas[field]
+	if supplier == "IEK" {
+		switch field {
+		case "moq":
+			schema = map[string][]string{"code": {"код 1с", "код 1c"}, "article": {"артикул поставщика"}, "name": {"наименование"}, "multiple": {"мин. разр. к отгр."}}
+		case "monthly_sales":
+			schema = schemas["monthly_stock"]
+		case "in_transit":
+			schema = map[string][]string{"code": {"код 1с", "код 1c"}, "article": {"артикул иэк"}, "name": {"наименование"}}
+		}
+	}
 	props, err := f.GetWorkbookProps()
 	if err != nil {
 		return header{}, errors.New("Не удалось прочитать свойства книги.")
@@ -313,7 +401,7 @@ func findHeader(ctx context.Context, f *excelize.File, field string) (header, er
 		for i, row := range preview {
 			columns := map[string]int{}
 			for c, value := range row {
-				for key, aliases := range schemas[field] {
+				for key, aliases := range schema {
 					for _, alias := range aliases {
 						if normalize(value) == alias {
 							columns[key] = c
@@ -321,10 +409,20 @@ func findHeader(ctx context.Context, f *excelize.File, field string) (header, er
 					}
 				}
 			}
-			if len(columns) != len(schemas[field]) {
+			if len(columns) != len(schema) {
 				continue
 			}
 			h := header{sheet: sheet, row: i + 1, columns: columns, months: map[int]string{}, date1904: date1904}
+			if supplier == "IEK" && field == "in_transit" {
+				for c, v := range row {
+					if strings.Contains(normalize(v), "поступление до") {
+						h.transitColumns = append(h.transitColumns, c)
+					}
+				}
+				if len(h.transitColumns) == 0 {
+					continue
+				}
+			}
 			if field == "monthly_sales" || field == "monthly_stock" {
 				// Support a single header row, or merged year headers above months.
 				monthRow := i

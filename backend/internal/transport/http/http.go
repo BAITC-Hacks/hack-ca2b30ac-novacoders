@@ -16,6 +16,7 @@ import (
 
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/domain"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/importer"
+	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/recommendation"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/service"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/store"
 )
@@ -212,11 +213,22 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if len(r.MultipartForm.Value) > 0 {
-		jsonError(w, 400, "UNEXPECTED_FORM_FIELD", "Форма должна содержать только шесть файлов.", nil)
+	for name, values := range r.MultipartForm.Value {
+		if name != "supplier" || len(values) != 1 {
+			jsonError(w, 400, "UNEXPECTED_FORM_FIELD", "Разрешены шесть файлов и одно поле supplier.", nil)
+			return
+		}
+	}
+	supplier := r.FormValue("supplier")
+	if supplier == "" {
+		supplier = domain.Supplier
+	}
+	if supplier != domain.Supplier && supplier != "IEK" {
+		jsonError(w, 400, "INVALID_SUPPLIER", "supplier: SystemElectric или IEK", nil)
 		return
 	}
 	files := map[string]io.Reader{}
+	fileNames := map[string]string{}
 	for _, field := range importer.Fields {
 		parts := r.MultipartForm.File[field]
 		if len(parts) != 1 {
@@ -234,9 +246,10 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 		files[field] = file
+		fileNames[field] = parts[0].Filename
 	}
 	a.logger.Info("import_started")
-	d, err := importer.Import(r.Context(), files)
+	d, err := importer.ImportSupplier(r.Context(), files, supplier)
 	if err != nil {
 		var invalid *importer.ValidationError
 		if errors.As(err, &invalid) {
@@ -246,6 +259,7 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
+	d.SourceFiles = fileNames
 	d, err = a.service.Store.AddDataset(d)
 	if err != nil {
 		handleError(w, err)
@@ -337,6 +351,11 @@ func jsonError(w http.ResponseWriter, status int, code, message string, details 
 }
 
 func handleError(w http.ResponseWriter, err error) {
+	var upstream *recommendation.Error
+	if errors.As(err, &upstream) {
+		jsonError(w, upstream.HTTPStatus, upstream.Code, upstream.Message, upstream)
+		return
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		jsonError(w, 404, "NOT_FOUND", "Набор данных, расчёт или позиция не найдены.", nil)

@@ -11,13 +11,17 @@ import (
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/anomaly"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/domain"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/forecast"
+	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/recommendation"
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/store"
 )
 
 var ErrInvalid = errors.New("invalid input")
 
 type Service struct {
-	Store *store.Store
+	Store       *store.Store
+	Recommender interface {
+		Recommend(context.Context, *recommendation.Request) (*recommendation.Result, error)
+	}
 }
 
 func ValidateConfig(cfg domain.RunConfig) error {
@@ -31,6 +35,9 @@ func ValidateConfig(cfg domain.RunConfig) error {
 }
 
 func (s *Service) CreateRun(ctx context.Context, cfg domain.RunConfig) (*domain.CalculationRun, error) {
+	if s.Recommender != nil {
+		return s.createRemoteRun(ctx, cfg)
+	}
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -88,6 +95,9 @@ func (s *Service) Patch(ctx context.Context, id, code string, patch domain.Manag
 	d, err := s.Store.Dataset(r.DatasetID)
 	if err != nil {
 		return nil, err
+	}
+	if len(r.AIResponse) > 0 {
+		return s.patchRemote(ctx, id, code, patch, d)
 	}
 	return s.Store.UpdateRun(id, func(r *domain.CalculationRun) error {
 		if err := ctx.Err(); err != nil {

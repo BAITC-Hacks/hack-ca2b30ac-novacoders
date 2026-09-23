@@ -135,7 +135,7 @@ func Calculate(ctx context.Context, p *domain.Product, asOf time.Time, seasonali
 	}
 	item.RecommendedQuantity = qty
 	item.FinalQuantity = qty
-	item.Breakdown = domain.Breakdown{PeriodStart: period[0], PeriodEnd: period[11], BaseMonths: used, BaseMonthlyDemand: base, SeasonFactor: season, SeasonalitySource: source, GrowthFactor: growth, TargetMonths: target, StockoutCompensation: compensation, StockoutPeriods: stockouts, ForecastDemand: demand, SafetyStock: safety, SafetySeasonFactor: safetySeason, FreeStock: p.FreeStock, InTransit: p.InTransit, AdditionalStock: additional, Available: available, RawNeed: raw, OrderMultiple: p.OrderMultiple}
+	item.Breakdown = &domain.Breakdown{PeriodStart: period[0], PeriodEnd: period[11], BaseMonths: used, BaseMonthlyDemand: base, SeasonFactor: season, SeasonalitySource: source, GrowthFactor: growth, TargetMonths: target, StockoutCompensation: compensation, StockoutPeriods: stockouts, ForecastDemand: demand, SafetyStock: safety, SafetySeasonFactor: safetySeason, FreeStock: p.FreeStock, InTransit: p.InTransit, AdditionalStock: additional, Available: available, RawNeed: raw, OrderMultiple: p.OrderMultiple}
 	item.Decision = "NO_BUY"
 	if qty > 0 {
 		item.Decision = "BUY"

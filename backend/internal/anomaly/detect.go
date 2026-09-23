@@ -27,8 +27,12 @@ func Quantile(values []float64, q float64) float64 {
 // quantities, including returns, with a 1% (minimum 0.01 unit) tolerance.
 func Reconcile(p *domain.Product, asOf time.Time) []domain.Diagnostic {
 	totals := map[string]float64{}
+	unknown := map[string]bool{}
 	for _, t := range p.Transactions {
 		if t.Date.Before(asOf.AddDate(0, 0, 1)) {
+			if t.QuantityMissing {
+				unknown[t.Date.Format("2006-01")] = true
+			}
 			totals[t.Date.Format("2006-01")] += t.Quantity
 		}
 	}
@@ -40,7 +44,7 @@ func Reconcile(p *domain.Product, asOf time.Time) []domain.Diagnostic {
 	issues := []domain.Diagnostic{}
 	for _, m := range months {
 		monthly, ok := p.MonthlySales[m]
-		if !ok || math.Abs(monthly-totals[m]) > math.Max(.01, math.Abs(monthly)*.01) {
+		if unknown[m] || !ok || math.Abs(monthly-totals[m]) > math.Max(.01, math.Abs(monthly)*.01) {
 			issues = append(issues, domain.Diagnostic{Code: "SOURCE_CONFLICT", Message: "Месячные и детальные продажи не согласованы или месячная запись отсутствует.", Code1C: p.Code1C, Month: m, Blocking: true})
 		}
 	}
@@ -53,7 +57,7 @@ func Detect(p *domain.Product, asOf time.Time) ([]domain.Anomaly, []domain.Diagn
 	currentMonth := asOf.Format("2006-01")
 	for _, t := range p.Transactions {
 		month := t.Date.Format("2006-01")
-		if month >= currentMonth || t.DocumentID == "" {
+		if month >= currentMonth || t.DocumentID == "" || t.QuantityMissing {
 			continue
 		}
 		groups[key{month, t.DocumentID}] += t.Quantity

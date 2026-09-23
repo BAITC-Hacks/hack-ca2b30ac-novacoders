@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const Supplier = "SystemElectric"
 
@@ -42,10 +45,11 @@ type Product struct {
 }
 
 type Transaction struct {
-	Date       time.Time `json:"date"`
-	DocumentID string    `json:"documentId"`
-	Warehouse  string    `json:"warehouse"`
-	Quantity   float64   `json:"quantity"`
+	QuantityMissing bool      `json:"quantityMissing,omitempty"`
+	Date            time.Time `json:"date"`
+	DocumentID      string    `json:"documentId"`
+	Warehouse       string    `json:"warehouse"`
+	Quantity        float64   `json:"quantity"`
 }
 
 type ImportDiagnostics struct {
@@ -62,6 +66,8 @@ type ImportDiagnostics struct {
 }
 
 type Dataset struct {
+	Supplier    string              `json:"supplier"`
+	SourceFiles map[string]string   `json:"sourceFiles"`
 	ID          string              `json:"datasetId"`
 	AsOf        time.Time           `json:"asOf"`
 	Products    map[string]*Product `json:"products"`
@@ -70,13 +76,14 @@ type Dataset struct {
 }
 
 type RunConfig struct {
-	DatasetID          string `json:"datasetId"`
-	Supplier           string `json:"supplier"`
-	LeadTimeDays       int    `json:"leadTimeDays"`
-	SafetyDays         int    `json:"safetyDays"`
-	IncludeShowcase    bool   `json:"includeShowcase"`
-	IncludeTZStock     bool   `json:"includeTZStock"`
-	IncludeRetailStock bool   `json:"includeRetailStock"`
+	Settings           *RecommendationSettings `json:"settings,omitempty"`
+	DatasetID          string                  `json:"datasetId"`
+	Supplier           string                  `json:"supplier"`
+	LeadTimeDays       int                     `json:"leadTimeDays"`
+	SafetyDays         int                     `json:"safetyDays"`
+	IncludeShowcase    bool                    `json:"includeShowcase"`
+	IncludeTZStock     bool                    `json:"includeTZStock"`
+	IncludeRetailStock bool                    `json:"includeRetailStock"`
 }
 
 type Anomaly struct {
@@ -114,22 +121,27 @@ type Breakdown struct {
 }
 
 type Item struct {
-	Code1C              string       `json:"code1C"`
-	Article             string       `json:"article"`
-	Name                string       `json:"name"`
-	Supplier            string       `json:"supplier"`
-	Decision            string       `json:"decision"`
-	Urgency             string       `json:"urgency"`
-	RecommendedQuantity float64      `json:"recommendedQuantity"`
-	ApprovedQuantity    *float64     `json:"approvedQuantity"`
-	FinalQuantity       float64      `json:"finalQuantity"`
-	EstimatedCost       *float64     `json:"estimatedCost"`
-	UnitCost            *float64     `json:"unitCost"`
-	Breakdown           Breakdown    `json:"breakdown"`
-	Anomalies           []Anomaly    `json:"anomalies"`
-	Warnings            []Diagnostic `json:"warnings"`
-	AnomalyDecision     string       `json:"anomalyDecision,omitempty"`
-	ManagerComment      string       `json:"managerComment"`
+	Code1C               string          `json:"code1C"`
+	Article              string          `json:"article"`
+	Name                 string          `json:"name"`
+	Supplier             string          `json:"supplier"`
+	Decision             string          `json:"decision"`
+	Urgency              string          `json:"urgency"`
+	RecommendedQuantity  float64         `json:"recommendedQuantity"`
+	ApprovedQuantity     *float64        `json:"approvedQuantity"`
+	FinalQuantity        float64         `json:"finalQuantity"`
+	EstimatedCost        *float64        `json:"estimatedCost"`
+	UnitCost             *float64        `json:"unitCost"`
+	Breakdown            *Breakdown      `json:"breakdown,omitempty"`
+	Calculation          json.RawMessage `json:"calculation,omitempty"`
+	Explanation          json.RawMessage `json:"explanation,omitempty"`
+	AnomalyAnalysis      json.RawMessage `json:"anomalyAnalysis,omitempty"`
+	RequiresManualReview bool            `json:"requiresManualReview"`
+	Confidence           *float64        `json:"confidence,omitempty"`
+	Anomalies            []Anomaly       `json:"anomalies"`
+	Warnings             []Diagnostic    `json:"warnings"`
+	AnomalyDecision      string          `json:"anomalyDecision,omitempty"`
+	ManagerComment       string          `json:"managerComment"`
 }
 
 type Summary struct {
@@ -143,12 +155,26 @@ type Summary struct {
 }
 
 type CalculationRun struct {
-	ID        string    `json:"runId"`
-	DatasetID string    `json:"datasetId"`
-	CreatedAt time.Time `json:"createdAt"`
-	Config    RunConfig `json:"config"`
-	Summary   Summary   `json:"summary"`
-	Items     []Item    `json:"items"`
+	AIResponse json.RawMessage `json:"aiResponse,omitempty"`
+	ID         string          `json:"runId"`
+	DatasetID  string          `json:"datasetId"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	Config     RunConfig       `json:"config"`
+	Summary    Summary         `json:"summary"`
+	Items      []Item          `json:"items"`
+}
+
+// RecommendationSettings is the v1 contract of the separate calculation service.
+type RecommendationSettings struct {
+	HistoryMonths         int    `json:"historyMonths"`
+	ForecastHorizonMonths int    `json:"forecastHorizonMonths"`
+	LeadTimeDays          int    `json:"leadTimeDays"`
+	SafetyStockDays       int    `json:"safetyStockDays"`
+	ExcludePartialMonth   bool   `json:"excludePartialMonth"`
+	AvailableStockPolicy  string `json:"availableStockPolicy"`
+	AnomalyReviewEnabled  bool   `json:"anomalyReviewEnabled"`
+	ExplanationMode       string `json:"explanationMode"`
+	MaxAIExplanations     int    `json:"maxAIExplanations"`
 }
 
 type ManagerPatch struct {
