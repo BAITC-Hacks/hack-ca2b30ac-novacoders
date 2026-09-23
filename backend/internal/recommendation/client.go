@@ -20,10 +20,11 @@ const MaxPayloadBytes = 50_000_000
 // upstream internals are never exposed as a successful calculation.
 type Error struct {
 	HTTPStatus int
-	Code       string       `json:"code"`
-	Message    string       `json:"message"`
-	RequestID  string       `json:"requestId,omitempty"`
-	Fields     []FieldError `json:"fields,omitempty"`
+	Code       string          `json:"code"`
+	Message    string          `json:"message"`
+	RequestID  string          `json:"requestId,omitempty"`
+	Fields     []FieldError    `json:"fields,omitempty"`
+	Result     json.RawMessage `json:"result,omitempty"`
 }
 type FieldError struct {
 	Field   string `json:"field"`
@@ -34,15 +35,37 @@ func (e *Error) Error() string { return e.Message }
 
 type Client struct {
 	endpoint string
+	token    string
 	http     *http.Client
 }
 
+const DefaultServiceDeadline = 30 * time.Second
+const ResponseTimeAllowance = 5 * time.Second
+
+type ClientConfig struct {
+	BaseURL         string
+	Token           string
+	ServiceDeadline time.Duration
+}
+
 func NewClient(baseURL string) (*Client, error) {
-	u, err := url.Parse(baseURL)
+	return NewConfiguredClient(ClientConfig{BaseURL: baseURL, ServiceDeadline: DefaultServiceDeadline})
+}
+
+func NewConfiguredClient(cfg ClientConfig) (*Client, error) {
+	u, err := url.Parse(cfg.BaseURL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("AI_SERVICE_URL должен быть HTTP(S) URL без credentials, query и fragment")
 	}
-	return &Client{endpoint: strings.TrimRight(baseURL, "/") + "/v1/recommendations", http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	if cfg.ServiceDeadline <= 0 || cfg.ServiceDeadline > time.Minute {
+		return nil, fmt.Errorf("AI_REQUEST_TIMEOUT_SECONDS должен быть больше 0 и не больше 60 для текущего HTTP deadline Go")
+	}
+	for _, c := range cfg.Token {
+		if c <= ' ' || c >= 127 {
+			return nil, fmt.Errorf("AI_SERVICE_TOKEN должен содержать только печатные ASCII-символы без пробелов")
+		}
+	}
+	return &Client{endpoint: strings.TrimRight(cfg.BaseURL, "/") + "/v1/recommendations", token: cfg.Token, http: &http.Client{Timeout: cfg.ServiceDeadline + ResponseTimeAllowance, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 type Result struct {
@@ -51,6 +74,9 @@ type Result struct {
 }
 
 func (c *Client) Recommend(ctx context.Context, input *Request) (*Result, error) {
+	if !input.Settings.ExcludePartialMonth {
+		return nil, &Error{HTTPStatus: 422, Code: "AI_UNSUPPORTED_SETTINGS", Message: "Текущая версия AI Service рассчитывает только завершённые месяцы. Включите «Исключать неполный месяц».", RequestID: input.RequestID, Fields: []FieldError{{Field: "settings.excludePartialMonth", Message: "AI Service требует true; значение false пока не поддержано алгоритмом."}}}
+	}
 	data, err := json.Marshal(input)
 	if err != nil {
 		return nil, err
@@ -64,6 +90,9 @@ func (c *Client) Recommend(ctx context.Context, input *Request) (*Result, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	res, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -109,6 +138,14 @@ func (c *Client) Recommend(ctx context.Context, input *Request) (*Result, error)
 			status = 413
 		}
 		e := &Error{HTTPStatus: status, Code: "AI_SERVICE_ERROR", Message: "AI Service не смог выполнить расчёт.", RequestID: input.RequestID}
+		switch res.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			e.Code, e.Message = "AI_AUTHENTICATION_FAILED", "AI Service отклонил внутренний токен. Проверьте AI_SERVICE_TOKEN в окружении Go и AI Service."
+		case http.StatusServiceUnavailable:
+			e.HTTPStatus, e.Code, e.Message = 503, "AI_SERVICE_UNAVAILABLE", "AI Service недоступен или не настроен. Импорт сохранён; повторите расчёт после настройки сервиса."
+		case http.StatusGatewayTimeout:
+			e.HTTPStatus, e.Code, e.Message = 504, "AI_REQUEST_TIMEOUT", "AI Service исчерпал время обработки. Импорт сохранён; уменьшите набор или увеличьте согласованный deadline."
+		}
 		if json.Unmarshal(raw, &body) == nil && (res.StatusCode == 400 || res.StatusCode == 422 || res.StatusCode == 413) {
 			e.Code = "AI_" + body.Error.Code
 			e.Fields = body.Error.Fields
@@ -123,6 +160,13 @@ func (c *Client) Recommend(ctx context.Context, input *Request) (*Result, error)
 		return nil, invalid(input.RequestID, "Некорректный JSON ответа AI Service.")
 	}
 	if err := output.Validate(input); err != nil {
+		var incomplete *Error
+		if errors.As(err, &incomplete) {
+			// Preserve the validated AI result, including nulls, calculation and
+			// explanation. The current frontend cannot render a nullable order.
+			incomplete.Result = raw
+			return nil, incomplete
+		}
 		return nil, invalid(input.RequestID, err.Error())
 	}
 	return &Result{Response: output, Raw: raw}, nil

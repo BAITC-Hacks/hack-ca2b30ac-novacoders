@@ -25,7 +25,7 @@ func (s *Service) createRemoteRun(ctx context.Context, cfg domain.RunConfig) (*d
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	cfg.Settings = &req.Settings
+	cfg.Settings = &req.Settings.RecommendationSettings
 	cfg.LeadTimeDays, cfg.SafetyDays = 0, 0
 	// Do not hold the store lock while making a network request. No run is stored
 	// on failure, and the uploaded dataset remains available for a retry.
@@ -54,7 +54,7 @@ func (s *Service) createRemoteRun(ctx context.Context, cfg domain.RunConfig) (*d
 	for n, r := range result.Response.Recommendations {
 		p := d.Products[r.Code1C]
 		item := domain.Item{Code1C: p.Code1C, Article: p.Article, Name: p.Name, Supplier: p.Supplier, Decision: r.Action, Urgency: r.Urgency, RecommendedQuantity: *r.RecommendedQuantity, FinalQuantity: *r.RecommendedQuantity, EstimatedCost: r.EstimatedCost, UnitCost: r.EstimatedUnitCost, RequiresManualReview: r.RequiresManualReview, Confidence: r.Confidence, Calculation: raw.Recommendations[n].Calculation, Explanation: raw.Recommendations[n].Explanation, AnomalyAnalysis: raw.Recommendations[n].AnomalyAnalysis, Anomalies: []domain.Anomaly{}}
-		item.Warnings = historyWarnings(p, d.AsOf, req.Settings, conflicts[p.Code1C])
+		item.Warnings = historyWarnings(p, d.AsOf, req.Settings.RecommendationSettings, conflicts[p.Code1C])
 		item.Category, item.UpdatedAt = p.Category, run.CreatedAt
 		review := func(code, msg string) {
 			item.Warnings = append(item.Warnings, domain.Diagnostic{Code: code, Message: msg, Blocking: true, Code1C: p.Code1C})

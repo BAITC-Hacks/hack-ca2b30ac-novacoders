@@ -110,13 +110,16 @@ func TestCanonicalImportAnalyzeApproveExport(t *testing.T) {
 		}
 	}
 	path := "/api/v1/imports/" + imported.ImportID + "/recommendations"
-	params := `{"forecastHorizonMonths":3,"leadTimeDays":45,"safetyStockDays":0,"excludePartialMonth":false}`
+	if w := request(h, "POST", path, `{"forecastHorizonMonths":3,"leadTimeDays":45,"safetyStockDays":0,"excludePartialMonth":false}`); w.Code != 422 || !strings.Contains(w.Body.String(), "AI_UNSUPPORTED_SETTINGS") {
+		t.Fatalf("unsupported AI setting must be explicit: %d %s", w.Code, w.Body.String())
+	}
+	params := `{"forecastHorizonMonths":3,"leadTimeDays":45,"safetyStockDays":0,"excludePartialMonth":true}`
 	w := request(h, "POST", path, params)
 	if w.Code != 201 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 	sent := <-requests
-	if sent.RequestID == "" || sent.Settings.ForecastHorizonMonths != 3 || sent.Settings.LeadTimeDays != 45 || sent.Settings.SafetyStockDays != 0 || sent.Settings.ExcludePartialMonth {
+	if sent.RequestID == "" || sent.Settings.ForecastHorizonMonths != 3 || sent.Settings.LeadTimeDays != 45 || sent.Settings.SafetyStockDays != 0 || !sent.Settings.ExcludePartialMonth || sent.Settings.ReviewPeriodDays != 46 {
 		t.Fatalf("settings changed: %+v", sent.Settings)
 	}
 	var run runDTO

@@ -136,7 +136,7 @@ func TestLocalDatasetsContract(t *testing.T) {
 				}
 			}
 			conflicts, errors, kinds := map[string]int{}, map[string]int{}, map[string]int{}
-			first, last := HistoryWindow(d.AsOf, req.Settings)
+			first, last := HistoryWindow(d.AsOf, req.Settings.RecommendationSettings)
 			inHistory := 0
 			for _, w := range d.Diagnostics.SourceConflicts {
 				conflicts[w.Month]++

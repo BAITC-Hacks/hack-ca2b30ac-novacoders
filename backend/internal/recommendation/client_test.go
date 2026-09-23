@@ -127,6 +127,9 @@ func TestClientErrorStatusAndTimeout(t *testing.T) {
 		{422, 422, `{"error":{"code":"VALIDATION_ERROR","message":"bad","fields":[{"field":"products[0].code1C","message":"missing"}]}}`, "application/json"},
 		{400, 422, `{"error":{"code":"INVALID_REQUEST","message":"bad"}}`, "application/json"},
 		{413, 413, `{"error":{"code":"PAYLOAD_TOO_LARGE","message":"big"}}`, "application/json"},
+		{401, 502, `{"error":{"code":"UNAUTHORIZED","message":"secret"}}`, "application/json"},
+		{503, 503, `{"error":{"code":"AI_NOT_CONFIGURED","message":"secret"}}`, "application/json"},
+		{504, 504, `{"error":{"code":"REQUEST_TIMEOUT","message":"secret"}}`, "application/json"},
 		{500, 502, `{"secret":"do not expose"}`, "application/json"},
 		{200, 502, `<html>oops</html>`, "text/html"},
 		{200, 502, `{} {}`, "application/json"},
@@ -190,5 +193,133 @@ func TestUnknownTransactionQuantityIsNull(t *testing.T) {
 	}
 	if r.MonthlySales == nil || r.MonthlyStock == nil || r.Seasonality == nil {
 		t.Fatal("empty arrays must not serialize to null")
+	}
+}
+
+func TestConfiguredClientSendsInternalTokenAndHonorsDeadline(t *testing.T) {
+	req := input(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer integration-test-token" {
+			t.Error("missing internal authorization")
+		}
+		if r.Header.Get("OpenAI-Organization") != "" {
+			t.Error("provider credentials do not belong in backend")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(validReply(req))
+	}))
+	defer srv.Close()
+	c, err := NewConfiguredClient(ClientConfig{BaseURL: srv.URL, Token: "integration-test-token", ServiceDeadline: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.http.Timeout != 35*time.Second {
+		t.Fatal("Go must allow AI deadline plus response margin")
+	}
+	if _, err := c.Recommend(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	for _, cfg := range []ClientConfig{
+		{BaseURL: srv.URL, ServiceDeadline: 0},
+		{BaseURL: srv.URL, ServiceDeadline: 61 * time.Second},
+		{BaseURL: srv.URL, Token: "bad\r\nheader", ServiceDeadline: time.Second},
+	} {
+		if _, err := NewConfiguredClient(cfg); err == nil {
+			t.Fatal("invalid AI config accepted")
+		}
+	}
+}
+
+func TestInternalTokenNeverFollowsRedirects(t *testing.T) {
+	forwarded := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { forwarded = true }))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer source.Close()
+	c, err := NewConfiguredClient(ClientConfig{BaseURL: source.URL, Token: "integration-test-token", ServiceDeadline: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Recommend(context.Background(), input(t)); err == nil || forwarded {
+		t.Fatal("redirect followed or accepted")
+	}
+}
+
+func TestUnknownRecommendationReturns422WithOriginalNullResult(t *testing.T) {
+	req := input(t)
+	reply := validReply(req)
+	item := reply["recommendations"].([]any)[0].(map[string]any)
+	item["recommendedQuantity"], item["requiresManualReview"] = nil, true
+	item["processingStatus"], item["missingFields"] = "needs_review", []string{"inventory.freeStock"}
+	item["calculation"].(map[string]any)["roundedRequirement"] = nil
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(reply)
+	}))
+	defer srv.Close()
+	c, _ := NewClient(srv.URL)
+	result, err := c.Recommend(context.Background(), req)
+	var incomplete *Error
+	if result != nil || !errors.As(err, &incomplete) || incomplete.HTTPStatus != 422 || incomplete.Code != "AI_INCOMPLETE_DATA" || incomplete.RequestID != req.RequestID {
+		t.Fatalf("unexpected result/error: %v", err)
+	}
+	if len(incomplete.Fields) != 1 || !strings.Contains(incomplete.Fields[0].Message, "inventory.freeStock") {
+		t.Fatal("missing fields lost")
+	}
+	if !strings.Contains(string(incomplete.Result), `"recommendedQuantity":null`) || !strings.Contains(string(incomplete.Result), `"explanation"`) {
+		t.Fatal("null or AI explanation lost")
+	}
+}
+
+func TestDuplicateDocumentLinesHaveStableUniqueAIIDs(t *testing.T) {
+	first, second := input(t), input(t)
+	if first.Transactions[0].TransactionID == first.Transactions[1].TransactionID {
+		t.Fatal("duplicate row IDs rejected by real AI service")
+	}
+	for i, tx := range first.Transactions {
+		if tx.TransactionID != second.Transactions[i].TransactionID || len(tx.TransactionID) > 256 {
+			t.Fatal("unstable or too long row ID")
+		}
+	}
+}
+
+func TestExplicitOrderAndStockMetadataReachAI(t *testing.T) {
+	p := &domain.Product{Code1C: "001_", Supplier: "IEK", OrderMultiple: 5, Unit: "шт", MinimumOrderQuantity: ptr(0), QuantityStep: ptr(1), StockAsOfDate: "2026-09-22"}
+	d := &domain.Dataset{AsOf: domain.DatasetDate(), Products: map[string]*domain.Product{p.Code1C: p}}
+	r, err := Build(d, domain.RunConfig{Supplier: "IEK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Products[0].Unit != "шт" || r.Products[0].MinimumOrderQuantity == nil || *r.Products[0].MinimumOrderQuantity != 0 || r.Inventory[0].StockAsOfDate != "2026-09-22" || r.Inventory[0].FreeStock != nil {
+		t.Fatal("order metadata or unknown inventory changed")
+	}
+}
+
+func TestCalendarHorizonAdaptsToAICoverageWithoutDoubleCountingLead(t *testing.T) {
+	p := &domain.Product{Code1C: "001_", Supplier: "IEK"}
+	d := &domain.Dataset{AsOf: domain.DatasetDate(), Products: map[string]*domain.Product{p.Code1C: p}}
+	s, _ := Settings(domain.RunConfig{})
+	for _, tc := range []struct{ months, lead, coverage int }{{1, 30, 30}, {2, 30, 61}, {3, 45, 91}} {
+		s.ForecastHorizonMonths, s.LeadTimeDays = tc.months, tc.lead
+		r, err := Build(d, domain.RunConfig{Supplier: "IEK", Settings: &s})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Settings.ReviewPeriodDays+r.Settings.LeadTimeDays != tc.coverage {
+			t.Fatalf("wrong coverage: %+v", r.Settings)
+		}
+		encoded, err := json.Marshal(r)
+		if err != nil || !strings.Contains(string(encoded), `"reviewPeriodDays":`) {
+			t.Fatal("review interval must be explicit, including zero")
+		}
+	}
+	s.ForecastHorizonMonths, s.LeadTimeDays = 1, 31
+	if _, err := Build(d, domain.RunConfig{Supplier: "IEK", Settings: &s}); err == nil {
+		t.Fatal("coverage shorter than lead time accepted")
 	}
 }

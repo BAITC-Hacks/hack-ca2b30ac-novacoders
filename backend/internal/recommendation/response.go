@@ -3,6 +3,7 @@ package recommendation
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,8 @@ type Recommendation struct {
 	Urgency              string       `json:"urgency"`
 	Confidence           *float64     `json:"confidence"`
 	RequiresManualReview bool         `json:"requiresManualReview"`
+	ProcessingStatus     string       `json:"processingStatus"`
+	MissingFields        []string     `json:"missingFields"`
 	RecommendedQuantity  *float64     `json:"recommendedQuantity"`
 	EstimatedUnitCost    *float64     `json:"estimatedUnitCost"`
 	EstimatedCost        *float64     `json:"estimatedCost"`
@@ -82,7 +85,8 @@ func (r *Response) Validate(input *Request) error {
 		expected[p.Code1C] = true
 	}
 	seen := map[string]bool{}
-	for _, item := range r.Recommendations {
+	incomplete := &Error{HTTPStatus: 422, Code: "AI_INCOMPLETE_DATA", Message: "AI Service не определил количество заказа: не хватает данных. Импорт сохранён. Неизвестные количества не заменены нулём.", RequestID: input.RequestID}
+	for index, item := range r.Recommendations {
 		if !expected[item.Code1C] || seen[item.Code1C] {
 			return fmt.Errorf("AI Service вернул неизвестный или повторный code1C.")
 		}
@@ -93,8 +97,16 @@ func (r *Response) Validate(input *Request) error {
 		if item.Urgency != "HIGH" && item.Urgency != "MEDIUM" && item.Urgency != "LOW" && item.Urgency != "NONE" {
 			return fmt.Errorf("Неизвестное urgency в ответе AI Service.")
 		}
-		if item.RecommendedQuantity == nil || *item.RecommendedQuantity < 0 || *item.RecommendedQuantity > 1e12 || math.Trunc(*item.RecommendedQuantity) != *item.RecommendedQuantity || item.Calculation == nil {
+		if item.Calculation == nil {
 			return fmt.Errorf("Отсутствует calculation или некорректно recommendedQuantity в ответе AI Service.")
+		}
+		if item.RecommendedQuantity == nil {
+			if item.Action != "REVIEW" || !item.RequiresManualReview || item.ProcessingStatus != "needs_review" || len(item.MissingFields) == 0 || item.Calculation.RoundedRequirement != nil {
+				return fmt.Errorf("Неизвестное количество заказа не сопровождается согласованным статусом needs_review и missingFields.")
+			}
+			incomplete.Fields = append(incomplete.Fields, FieldError{Field: fmt.Sprintf("recommendations[%d].recommendedQuantity", index), Message: "Товар " + item.Code1C + ": требуются " + strings.Join(item.MissingFields, ", ")})
+		} else if *item.RecommendedQuantity < 0 || *item.RecommendedQuantity > 1e12 || math.Trunc(*item.RecommendedQuantity) != *item.RecommendedQuantity {
+			return fmt.Errorf("Некорректно recommendedQuantity в ответе AI Service.")
 		}
 		if item.Confidence != nil && (*item.Confidence < 0 || *item.Confidence > 1) {
 			return fmt.Errorf("confidence вне диапазона 0–1.")
@@ -112,6 +124,9 @@ func (r *Response) Validate(input *Request) error {
 	}
 	if len(seen) != len(expected) {
 		return fmt.Errorf("AI Service вернул неполный список рекомендаций: %d из %d.", len(seen), len(expected))
+	}
+	if len(incomplete.Fields) != 0 {
+		return incomplete
 	}
 	return nil
 }

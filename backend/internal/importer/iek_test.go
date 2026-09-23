@@ -110,3 +110,41 @@ func TestInvalidTransactionQuantityIsRetainedAsUnknownWithMonth(t *testing.T) {
 		t.Fatal("invalid quantity has no scoped blocking diagnostic")
 	}
 }
+
+func TestExplicitAIOrderFieldsDoNotInventUnknownValues(t *testing.T) {
+	files := demoReaders(t)
+	files["moq"] = workbook(t, [][]any{
+		{"Номенклатура.Код", "Артикул", "Кратность", "Единица измерения", "Минимальная партия", "Шаг количества"},
+		{"030200128_", "DEMO-001", 10, "шт", 0, 1},
+		{"030200129_", "DEMO-002", 10, nil, nil, nil},
+	})
+	f, err := excelize.OpenReader(files["in_transit"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellValue("Sheet1", "N1", "Дата остатка"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellValue("Sheet1", "N2", "2026-09-22"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.WriteToBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	files["in_transit"] = bytes.NewReader(b.Bytes())
+	d, err := Import(context.Background(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	known, unknown := d.Products["030200128_"], d.Products["030200129_"]
+	if known.Unit != "шт" || known.MinimumOrderQuantity == nil || *known.MinimumOrderQuantity != 0 || known.QuantityStep == nil || *known.QuantityStep != 1 || known.StockAsOfDate != "2026-09-22" {
+		t.Fatal("explicit source values lost")
+	}
+	if unknown.Unit != "" || unknown.MinimumOrderQuantity != nil || unknown.QuantityStep != nil || unknown.StockAsOfDate != "" {
+		t.Fatal("unknown fields were invented from MOQ/asOfDate")
+	}
+}

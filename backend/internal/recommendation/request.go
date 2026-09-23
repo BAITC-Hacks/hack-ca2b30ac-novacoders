@@ -4,6 +4,7 @@ package recommendation
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 
@@ -15,13 +16,16 @@ type Source struct {
 	RowCount int    `json:"rowCount"`
 }
 type Product struct {
-	Code1C   string   `json:"code1C"`
-	Article  string   `json:"article"`
-	Name     string   `json:"name"`
-	Supplier string   `json:"supplier"`
-	Category string   `json:"category"`
-	MOQ      *int     `json:"moq"`
-	UnitCost *float64 `json:"unitCost"`
+	Code1C               string   `json:"code1C"`
+	Article              string   `json:"article"`
+	Name                 string   `json:"name"`
+	Supplier             string   `json:"supplier"`
+	Category             string   `json:"category"`
+	MOQ                  *int     `json:"moq"`
+	UnitCost             *float64 `json:"unitCost"`
+	Unit                 string   `json:"unit,omitempty"`
+	MinimumOrderQuantity *float64 `json:"minimumOrderQuantity,omitempty"`
+	QuantityStep         *float64 `json:"quantityStep,omitempty"`
 }
 type Monthly struct {
 	Code1C   string   `json:"code1C"`
@@ -41,24 +45,32 @@ type Inventory struct {
 	ReservedStock *float64 `json:"reservedStock"`
 	FreeStock     *float64 `json:"freeStock"`
 	InTransit     *float64 `json:"inTransit"`
+	StockAsOfDate string   `json:"stockAsOfDate,omitempty"`
 }
 type Seasonality struct {
 	Month       int     `json:"month"`
 	Coefficient float64 `json:"coefficient"`
 }
+
+// Only the internal AI request gains reviewPeriodDays. The frontend continues
+// sending its existing forecastHorizonMonths/leadTimeDays settings unchanged.
+type RequestSettings struct {
+	domain.RecommendationSettings
+	ReviewPeriodDays int `json:"reviewPeriodDays"`
+}
 type Request struct {
-	SchemaVersion string                        `json:"schemaVersion"`
-	RequestID     string                        `json:"requestId"`
-	AsOfDate      string                        `json:"asOfDate"`
-	Currency      string                        `json:"currency"`
-	Settings      domain.RecommendationSettings `json:"settings"`
-	SourceMeta    map[string]Source             `json:"sourceMeta"`
-	Products      []Product                     `json:"products"`
-	MonthlySales  []Monthly                     `json:"monthlySales"`
-	MonthlyStock  []Monthly                     `json:"monthlyStock"`
-	Transactions  []Transaction                 `json:"transactions"`
-	Inventory     []Inventory                   `json:"inventory"`
-	Seasonality   []Seasonality                 `json:"seasonality"`
+	SchemaVersion string            `json:"schemaVersion"`
+	RequestID     string            `json:"requestId"`
+	AsOfDate      string            `json:"asOfDate"`
+	Currency      string            `json:"currency"`
+	Settings      RequestSettings   `json:"settings"`
+	SourceMeta    map[string]Source `json:"sourceMeta"`
+	Products      []Product         `json:"products"`
+	MonthlySales  []Monthly         `json:"monthlySales"`
+	MonthlyStock  []Monthly         `json:"monthlyStock"`
+	Transactions  []Transaction     `json:"transactions"`
+	Inventory     []Inventory       `json:"inventory"`
+	Seasonality   []Seasonality     `json:"seasonality"`
 }
 
 func Settings(cfg domain.RunConfig) (domain.RecommendationSettings, error) {
@@ -88,13 +100,17 @@ func Build(d *domain.Dataset, cfg domain.RunConfig) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
+	coverageDays := int(d.AsOf.AddDate(0, settings.ForecastHorizonMonths, 0).Sub(d.AsOf).Hours() / 24)
+	if coverageDays < settings.LeadTimeDays {
+		return nil, fmt.Errorf("календарный горизонт прогноза (%d дней) короче срока поставки (%d дней)", coverageDays, settings.LeadTimeDays)
+	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return nil, err
 	}
 	id[6] = (id[6] & 0x0f) | 0x40
 	id[8] = (id[8] & 0x3f) | 0x80
-	r := &Request{SchemaVersion: "1.0", RequestID: fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:]), AsOfDate: d.AsOf.Format("2006-01-02"), Currency: "KZT", Settings: settings, SourceMeta: map[string]Source{}, Products: []Product{}, MonthlySales: []Monthly{}, MonthlyStock: []Monthly{}, Transactions: []Transaction{}, Inventory: []Inventory{}, Seasonality: []Seasonality{}}
+	r := &Request{SchemaVersion: "1.0", RequestID: fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:]), AsOfDate: d.AsOf.Format("2006-01-02"), Currency: "KZT", Settings: RequestSettings{RecommendationSettings: settings, ReviewPeriodDays: coverageDays - settings.LeadTimeDays}, SourceMeta: map[string]Source{}, Products: []Product{}, MonthlySales: []Monthly{}, MonthlyStock: []Monthly{}, Transactions: []Transaction{}, Inventory: []Inventory{}, Seasonality: []Seasonality{}}
 	for field, key := range map[string]string{"moq": "moq", "monthly_sales": "monthlySales", "sales_transactions": "detailedSales", "monthly_stock": "monthlyStock", "seasonality": "seasonality", "in_transit": "inventoryTransit"} {
 		r.SourceMeta[key] = Source{FileName: d.SourceFiles[field], RowCount: d.Diagnostics.ProcessedRows[field]}
 	}
@@ -109,7 +125,7 @@ func Build(d *domain.Dataset, cfg domain.RunConfig) (*Request, error) {
 			n := p.OrderMultiple
 			moq = &n
 		}
-		r.Products = append(r.Products, Product{code, p.Article, p.Name, p.Supplier, p.Category, moq, p.UnitCost})
+		r.Products = append(r.Products, Product{Code1C: code, Article: p.Article, Name: p.Name, Supplier: p.Supplier, Category: p.Category, MOQ: moq, UnitCost: p.UnitCost, Unit: p.Unit, MinimumOrderQuantity: p.MinimumOrderQuantity, QuantityStep: p.QuantityStep})
 		sales := map[string]*float64{}
 		for m, q := range p.MonthlySales {
 			sales[m] = ptr(q)
@@ -123,12 +139,32 @@ func Build(d *domain.Dataset, cfg domain.RunConfig) (*Request, error) {
 		for _, m := range sortedKeys(p.MonthlyStock) {
 			r.MonthlyStock = append(r.MonthlyStock, Monthly{code, m, p.MonthlyStock[m]})
 		}
+		documentCounts := map[string]int{}
+		reservedIDs := map[string]bool{}
 		for _, t := range p.Transactions {
+			documentCounts[t.DocumentID]++
+			reservedIDs[t.DocumentID] = true
+		}
+		for row, t := range p.Transactions {
 			var q *float64
 			if !t.QuantityMissing {
 				q = ptr(t.Quantity)
 			}
-			r.Transactions = append(r.Transactions, Transaction{code, t.DocumentID, t.Date.Format("2006-01-02"), t.Warehouse, q})
+			transactionID := t.DocumentID
+			if transactionID == "" || len(transactionID) > 256 || documentCounts[transactionID] > 1 {
+				// The AI schema requires a unique row ID per SKU, while an Excel
+				// document can contain several lines. Keep every line and its
+				// original document in Dataset; adapt only the outgoing row ID.
+				for salt := 0; ; salt++ {
+					digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%d", code, row, t.DocumentID, salt)))
+					transactionID = fmt.Sprintf("row-%x", digest)
+					if !reservedIDs[transactionID] {
+						break
+					}
+				}
+			}
+			reservedIDs[transactionID] = true
+			r.Transactions = append(r.Transactions, Transaction{code, transactionID, t.Date.Format("2006-01-02"), t.Warehouse, q})
 		}
 		known := func(key string, value float64) *float64 {
 			if !p.PresentFields[key] {
@@ -136,7 +172,7 @@ func Build(d *domain.Dataset, cfg domain.RunConfig) (*Request, error) {
 			}
 			return ptr(value)
 		}
-		r.Inventory = append(r.Inventory, Inventory{code, known("totalStock", p.TotalStock), known("reservedStock", p.ReservedStock), known("freeStock", p.FreeStock), known("inTransit", p.InTransit)})
+		r.Inventory = append(r.Inventory, Inventory{Code1C: code, TotalStock: known("totalStock", p.TotalStock), ReservedStock: known("reservedStock", p.ReservedStock), FreeStock: known("freeStock", p.FreeStock), InTransit: known("inTransit", p.InTransit), StockAsOfDate: p.StockAsOfDate})
 	}
 	for m := 1; m <= 12; m++ {
 		if k, ok := d.Seasonality[m]; ok {

@@ -33,9 +33,18 @@ func main() {
 		logger.Error("missing_ai_service_url", "message", "Укажите AI_SERVICE_URL, например http://127.0.0.1:8001")
 		os.Exit(1)
 	}
-	client, err := recommendation.NewClient(aiURL)
+	deadline := recommendation.DefaultServiceDeadline
+	if value := os.Getenv("AI_REQUEST_TIMEOUT_SECONDS"); value != "" {
+		var err error
+		deadline, err = time.ParseDuration(value + "s")
+		if err != nil {
+			logger.Error("invalid_ai_deadline", "message", "AI_REQUEST_TIMEOUT_SECONDS должен быть числом секунд")
+			os.Exit(1)
+		}
+	}
+	client, err := recommendation.NewConfiguredClient(recommendation.ClientConfig{BaseURL: aiURL, Token: os.Getenv("AI_SERVICE_TOKEN"), ServiceDeadline: deadline})
 	if err != nil {
-		logger.Error("invalid_ai_service_url", "error", err)
+		logger.Error("invalid_ai_service_config", "error", err)
 		os.Exit(1)
 	}
 	svc := &service.Service{Store: store.New(), Recommender: client}

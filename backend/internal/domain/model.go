@@ -22,27 +22,31 @@ type Diagnostic struct {
 }
 
 type Product struct {
-	Code1C           string              `json:"code1C"`
-	Article          string              `json:"article"`
-	Name             string              `json:"name"`
-	Category         string              `json:"category"`
-	Supplier         string              `json:"supplier"`
-	OrderMultiple    int                 `json:"orderMultiple"`
-	MonthlySales     map[string]float64  `json:"monthlySales"`
-	BlankSalesMonths []string            `json:"blankSalesMonths"`
-	MonthlyStock     map[string]*float64 `json:"monthlyStock"`
-	Transactions     []Transaction       `json:"transactions"`
-	ShowcaseStock    float64             `json:"showcaseStock"`
-	TZStock          float64             `json:"tzStock"`
-	RetailStock      float64             `json:"retailStock"`
-	TotalStock       float64             `json:"totalStock"`
-	ReservedStock    float64             `json:"reservedStock"`
-	FreeStock        float64             `json:"freeStock"`
-	InTransit        float64             `json:"inTransit"`
-	UnitCost         *float64            `json:"unitCost"`
-	Sources          map[string]bool     `json:"sources"`
-	PresentFields    map[string]bool     `json:"presentFields"`
-	Warnings         []Diagnostic        `json:"warnings"`
+	Code1C               string              `json:"code1C"`
+	Article              string              `json:"article"`
+	Name                 string              `json:"name"`
+	Category             string              `json:"category"`
+	Supplier             string              `json:"supplier"`
+	OrderMultiple        int                 `json:"orderMultiple"`
+	Unit                 string              `json:"unit,omitempty"`
+	MinimumOrderQuantity *float64            `json:"minimumOrderQuantity,omitempty"`
+	QuantityStep         *float64            `json:"quantityStep,omitempty"`
+	StockAsOfDate        string              `json:"stockAsOfDate,omitempty"`
+	MonthlySales         map[string]float64  `json:"monthlySales"`
+	BlankSalesMonths     []string            `json:"blankSalesMonths"`
+	MonthlyStock         map[string]*float64 `json:"monthlyStock"`
+	Transactions         []Transaction       `json:"transactions"`
+	ShowcaseStock        float64             `json:"showcaseStock"`
+	TZStock              float64             `json:"tzStock"`
+	RetailStock          float64             `json:"retailStock"`
+	TotalStock           float64             `json:"totalStock"`
+	ReservedStock        float64             `json:"reservedStock"`
+	FreeStock            float64             `json:"freeStock"`
+	InTransit            float64             `json:"inTransit"`
+	UnitCost             *float64            `json:"unitCost"`
+	Sources              map[string]bool     `json:"sources"`
+	PresentFields        map[string]bool     `json:"presentFields"`
+	Warnings             []Diagnostic        `json:"warnings"`
 }
 
 type Transaction struct {

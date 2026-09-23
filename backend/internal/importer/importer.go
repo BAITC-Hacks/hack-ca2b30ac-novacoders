@@ -216,7 +216,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 		for _, attr := range []struct {
 			key    string
 			target *string
-		}{{"article", &p.Article}, {"name", &p.Name}, {"category", &p.Category}} {
+		}{{"article", &p.Article}, {"name", &p.Name}, {"category", &p.Category}, {"unit", &p.Unit}} {
 			col, exists := h.columns[attr.key]
 			if !exists {
 				continue
@@ -225,6 +225,9 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			if value != "" {
 				if *attr.target != "" && *attr.target != value && attr.key == "article" {
 					warn("ARTICLE_CONFLICT", "Артикулы для одного кода 1С различаются.", true)
+				}
+				if *attr.target != "" && *attr.target != value && attr.key == "unit" {
+					warn("UNIT_CONFLICT", "Единицы измерения одного товара различаются между источниками.", true)
 				}
 				*attr.target = value
 			}
@@ -236,6 +239,27 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 				bad("Некорректная кратность поставки.")
 			} else if ok {
 				p.OrderMultiple = int(v)
+			}
+			// AI distinguishes a minimum order from the legacy MOQ (multiple).
+			// Only explicit columns provide these values; never infer minimum=0.
+			for _, attr := range []struct {
+				key      string
+				target   **float64
+				positive bool
+			}{
+				{"minimumOrderQuantity", &p.MinimumOrderQuantity, false},
+				{"quantityStep", &p.QuantityStep, true},
+			} {
+				col, exists := h.columns[attr.key]
+				if !exists {
+					continue
+				}
+				value, known, err := number(cell(raw, col))
+				if err != nil || known && (value < 0 || attr.positive && value == 0) {
+					bad("Некорректное значение " + attr.key + ".")
+				} else if known {
+					*attr.target = &value
+				}
 			}
 		case "monthly_sales", "monthly_stock":
 			cols := make([]int, 0, len(h.months))
@@ -302,6 +326,14 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			}
 			p.Transactions = append(p.Transactions, domain.Transaction{Date: date, DocumentID: doc, Warehouse: cell(row, h.columns["warehouse"]), Quantity: quantity, QuantityMissing: !ok})
 		case "in_transit":
+			if col, exists := h.columns["stockAsOfDate"]; exists && cell(raw, col) != "" {
+				date, err := parseDate(cell(raw, col), h.date1904)
+				if err != nil || !date.Before(d.AsOf.AddDate(0, 0, 1)) {
+					bad("Некорректная дата текущего остатка.")
+				} else {
+					p.StockAsOfDate = date.Format("2006-01-02")
+				}
+			}
 			if len(h.transitColumns) > 0 {
 				// A blank shipment cell is unknown. Preserve that uncertainty for
 				// the aggregate instead of silently converting it to zero.
@@ -410,6 +442,23 @@ func findHeader(ctx context.Context, f *excelize.File, field string, supplier st
 			}
 			if len(columns) != len(schema) {
 				continue
+			}
+			optional := map[string][]string{"unit": {"ед.", "ед. изм.", "единица измерения", "unit"}}
+			if field == "moq" {
+				optional["minimumOrderQuantity"] = []string{"минимальная партия", "минимальный заказ", "minimumorderquantity"}
+				optional["quantityStep"] = []string{"шаг количества", "quantitystep"}
+			}
+			if field == "in_transit" {
+				optional["stockAsOfDate"] = []string{"дата остатка", "stockasofdate"}
+			}
+			for c, value := range row {
+				for key, aliases := range optional {
+					for _, alias := range aliases {
+						if normalize(value) == alias {
+							columns[key] = c
+						}
+					}
+				}
 			}
 			h := header{sheet: sheet, row: i + 1, columns: columns, months: map[int]string{}, date1904: date1904}
 			if supplier == "IEK" && field == "in_transit" {
