@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "1.1",
+  "requestId": "93a40813-12dd-4aef-829d-4803251f6814",
+  "asOfDate": "2026-09-01",
+  "currency": "KZT",
+  "settings": {
+    "historyMonths": 12,
+    "forecastHorizonMonths": 2,
+    "leadTimeDays": 20,
+    "reviewPeriodDays": 10,
+    "safetyStockDays": 4,
+    "excludePartialMonth": true,
+    "availableStockPolicy": "FREE_PLUS_IN_TRANSIT",
+    "anomalyReviewEnabled": true,
+    "explanationMode": "IMPORTANT_ONLY",
+    "maxAIExplanations": 50
+  },
+  "products": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "article": "000017",
+      "name": "Демонстрационный товар",
+      "supplier": "Демо-поставщик",
+      "category": "1",
+      "unit": "шт",
+      "minimumOrderQuantity": 20,
+      "orderMultiple": 1,
+      "unitCost": null,
+      "additionalGrowthRate": 0,
+      "quantityStep": 1
+    }
+  ],
+  "salesHistory": [],
+  "monthlySales": [
+    {
+      "code1C": "000317_",
+      "month": "2026-06",
+      "quantity": 150
+    },
+    {
+      "code1C": "000317_",
+      "month": "2026-07",
+      "quantity": 155
+    },
+    {
+      "code1C": "000317_",
+      "month": "2026-08",
+      "quantity": 155
+    }
+  ],
+  "monthlyStock": [],
+  "inventory": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "stockAsOfDate": "2026-09-01",
+      "totalStock": 50,
+      "reservedStock": 0,
+      "freeStock": 50,
+      "inTransit": 30
+    }
+  ],
+  "incomingShipments": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "rowId": "shipment-demo-001",
+      "quantity": 30,
+      "expectedDate": "2026-09-10"
+    }
+  ],
+  "seasonality": [
+    {
+      "month": 1,
+      "coefficient": 1
+    },
+    {
+      "month": 2,
+      "coefficient": 1
+    },
+    {
+      "month": 3,
+      "coefficient": 1
+    },
+    {
+      "month": 4,
+      "coefficient": 1
+    },
+    {
+      "month": 5,
+      "coefficient": 1
+    },
+    {
+      "month": 6,
+      "coefficient": 1
+    },
+    {
+      "month": 7,
+      "coefficient": 1
+    },
+    {
+      "month": 8,
+      "coefficient": 1
+    },
+    {
+      "month": 9,
+      "coefficient": 1
+    },
+    {
+      "month": 10,
+      "coefficient": 1
+    },
+    {
+      "month": 11,
+      "coefficient": 1
+    },
+    {
+      "month": 12,
+      "coefficient": 1
+    }
+  ],
+  "availability": [],
+  "transactions": [],
+  "is_demo": true
+}
