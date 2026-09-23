@@ -1,0 +1,22 @@
+import { AlertTriangle, ChevronRight, PackageOpen, PencilLine, SearchX } from 'lucide-react'
+import type { RecommendationItem } from '../types/api'
+import { decisionLabels, formatMoney, formatNumber, urgencyLabels } from '../lib/format'
+
+interface Props { items: RecommendationItem[]; total: number; selectedCode: string | null; onOpen: (item: RecommendationItem) => void; onReset: () => void }
+export default function RecommendationTable({ items, total, selectedCode, onOpen, onReset }: Props) {
+  if (!items.length) return <div className="empty-state">{total ? <SearchX size={30} /> : <PackageOpen size={30} />}<h3>{total ? 'Ничего не найдено' : 'В расчёте нет позиций'}</h3><p>{total ? 'Измените запрос или уберите часть фильтров.' : 'Проверьте исходные данные и запустите новый расчёт.'}</p>{total > 0 && <button className="btn btn-secondary" onClick={onReset}>Сбросить фильтры</button>}</div>
+  const suppliers = [...new Set(items.map((item) => item.supplier))]
+  return <div className="table-scroll" role="region" aria-label="Таблица закупочных решений, с прокруткой" tabIndex={0}><table className="recommendation-table">
+    <caption className="sr-only">Товары и закупочные решения. Код 1С и артикул указаны под названием. Количество и стоимость берутся из ответа сервера.</caption>
+    <colgroup><col className="col-product" /><col className="col-category" /><col className="col-stock" /><col className="col-transit" /><col className="col-forecast" /><col className="col-order" /><col className="col-cost" /><col className="col-urgency" /><col className="col-decision" /><col className="col-arrow" /></colgroup>
+    <thead><tr><th scope="col">Товар / код 1С / артикул</th><th scope="col">Категория</th><th scope="col" className="numeric">Свободно</th><th scope="col" className="numeric">В пути</th><th scope="col" className="numeric">Прогноз</th><th scope="col" className="numeric">К заказу</th><th scope="col" className="numeric">Стоимость, ₸</th><th scope="col">Срочность</th><th scope="col">Решение</th><th scope="col"><span className="sr-only">Подробнее</span></th></tr></thead>
+    {suppliers.map((supplier) => <tbody key={supplier}><tr className="supplier-row"><th scope="rowgroup" colSpan={10}>{supplier}<span>{items.filter((item) => item.supplier === supplier).length} позиций</span></th></tr>{items.filter((item) => item.supplier === supplier).map((item) => <tr key={item.code1C} className={`product-row ${selectedCode === item.code1C ? 'is-selected' : ''}`} onClick={() => onOpen(item)}>
+      <td className="product-name"><button aria-label={`${item.name}, открыть расчёт`} onClick={(event) => { event.stopPropagation(); onOpen(item) }}>{item.name}</button><div className="product-identifiers"><span title="Код 1С">{item.code1C}</span><span title="Артикул">{item.article}</span></div><div className="product-meta"><span>{item.unit}</span>{item.warnings.length > 0 && <span className="row-warning"><AlertTriangle size={13} /> {item.warnings.length === 1 ? 'Есть предупреждение' : `${item.warnings.length} предупреждения`}</span>}</div></td>
+      <td className="category-cell">{item.category}</td>
+      <td className="numeric">{formatNumber(item.breakdown.freeStock)}</td><td className="numeric">{formatNumber(item.breakdown.inTransit)}</td><td className="numeric">{formatNumber(item.breakdown.forecast)}</td>
+      <td className="numeric order-cell">{item.approvedQuantity !== undefined ? <><strong className="recommendation-value">{formatNumber(item.approvedQuantity)}</strong><span className="manual-quantity" title={`Рекомендация: ${formatNumber(item.recommendedQuantity)}`}><PencilLine size={12} /> Вручную</span><span className="original-quantity">Рек. {formatNumber(item.recommendedQuantity)}</span></> : <strong className={item.decision === 'BUY' ? 'recommendation-value' : ''}>{formatNumber(item.recommendedQuantity)}</strong>}</td>
+      <td className="numeric cost-cell">{item.estimatedCost === null ? <span className="unknown-cost" title="Стоимость неизвестна">Нет цены</span> : formatMoney(item.estimatedCost).replace(/\s*₸$/, '')}</td>
+      <td><span className={`urgency urgency-${item.urgency.toLowerCase()}`}><i />{urgencyLabels[item.urgency]}</span></td><td><span className={`decision decision-${item.decision.toLowerCase()}`}>{decisionLabels[item.decision]}</span></td><td><ChevronRight size={15} className="muted" /></td>
+    </tr>)}</tbody>)}
+  </table></div>
+}
