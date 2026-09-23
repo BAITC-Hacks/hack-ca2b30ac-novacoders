@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "1.1",
+  "requestId": "93a40813-12dd-4aef-829d-4803251f6814",
+  "runId": "run-938fae47-e637-4d01-9656-e4d924dd3c25",
+  "status": "COMPLETED_WITH_WARNINGS",
+  "generatedAt": "2026-09-23T11:48:54.567860Z",
+  "processingTimeMs": 2,
+  "summary": {
+    "totalProducts": 1,
+    "buyCount": 1,
+    "noBuyCount": 0,
+    "reviewCount": 0,
+    "totalRecommendedQuantity": 90.0,
+    "estimatedOrderCost": null
+  },
+  "providers": {
+    "nvidia": {
+      "status": "SKIPPED",
+      "reviewedAnomalies": 0
+    },
+    "openai": {
+      "status": "SKIPPED",
+      "generatedExplanations": 0
+    }
+  },
+  "recommendations": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "article": "000017",
+      "name": "Демонстрационный товар",
+      "supplier": "Демо-поставщик",
+      "category": "1",
+      "unit": "шт",
+      "action": "BUY",
+      "urgency": "NONE",
+      "confidence": null,
+      "requiresManualReview": false,
+      "forecast": 150.0,
+      "recommendedQuantity": 90.0,
+      "missingFields": [],
+      "processingStatus": "computed",
+      "calculationSource": "python",
+      "estimatedUnitCost": null,
+      "estimatedCost": null,
+      "calculation": {
+        "historyPeriod": {
+          "from": "2026-06",
+          "to": "2026-08"
+        },
+        "baseMonthlyDemand": 153.33333333333334,
+        "correctedMonthlyDemand": 153.33333333333334,
+        "anomalyExcludedQuantity": 0.0,
+        "stockoutCompensation": 0.0,
+        "growthFactor": 1.0,
+        "seasonalityFactor": 1.0,
+        "forecastHorizonMonths": 2,
+        "forecastDemand": 150.0,
+        "safetyStock": 20.0,
+        "freeStock": 50.0,
+        "inTransit": 30.0,
+        "availableStock": 50.0,
+        "rawRequirement": 90.0,
+        "moq": 1.0,
+        "minimumOrderQuantity": 20.0,
+        "orderMultiple": 1.0,
+        "roundedRequirement": 90.0,
+        "dailyDemand": 5.0,
+        "trendFactor": 1.0,
+        "additionalGrowthFactor": 1.0,
+        "coverageDays": 30,
+        "coverageEnd": "2026-10-01",
+        "transitCutoff": "2026-09-21",
+        "eligibleInTransit": 30.0,
+        "quantityStep": 1.0,
+        "analyticalHistory": [
+          {
+            "month": "2026-06",
+            "originalQuantity": 150.0,
+            "regularQuantity": 150.0,
+            "estimatedRegularDemand": 150.0,
+            "excludedOneOffQuantity": 0.0,
+            "stockoutDays": 0
+          },
+          {
+            "month": "2026-07",
+            "originalQuantity": 155.0,
+            "regularQuantity": 155.0,
+            "estimatedRegularDemand": 155.0,
+            "excludedOneOffQuantity": 0.0,
+            "stockoutDays": 0
+          },
+          {
+            "month": "2026-08",
+            "originalQuantity": 155.0,
+            "regularQuantity": 155.0,
+            "estimatedRegularDemand": 155.0,
+            "excludedOneOffQuantity": 0.0,
+            "stockoutDays": 0
+          }
+        ]
+      },
+      "anomalyAnalysis": {
+        "status": "PENDING_REVIEW",
+        "source": "mock",
+        "is_demo": true,
+        "proposals": [
+          {
+            "evidenceRowIds": [
+              "month:2026-08"
+            ],
+            "anomalyType": "possible_data_error",
+            "proposedAction": "investigate_data",
+            "explanation": "Демонстрационное предложение проверить строку; реальный анализ не выполнялся.",
+            "missingEvidence": [
+              "Необходим реальный анализ и проверка исходных данных."
+            ],
+            "status": "needs_review"
+          }
+        ],
+        "errorCode": null,
+        "candidates": []
+      },
+      "adjustments": [],
+      "explanation": {
+        "short": "Рекомендуемое количество: 90 шт.",
+        "details": [
+          "Покрытие 30 дней: прогноз 150; страховой запас 20.",
+          "max(0, 150 + 20 − 50 − 30) = 90.",
+          "После применения минимума 20.0, кратности 1.0 и шага 1.0: 90.",
+          "Корректировки относятся только к аналитической оценке; исходные продажи сохранены.",
+          "Предупреждение: Анализ аномалий демонстрационный; OpenAI не вызывался. Предложения не меняют расчёт.",
+          "Предупреждение: Вход помечен как синтетический пример."
+        ],
+        "generatedBy": "SYSTEM"
+      },
+      "warnings": [
+        {
+          "code": "MOCK_ANALYSIS",
+          "severity": "INFO",
+          "message": "Анализ аномалий демонстрационный; OpenAI не вызывался. Предложения не меняют расчёт."
+        },
+        {
+          "code": "PYTHON_BASELINE",
+          "severity": "INFO",
+          "message": "Источник расчёта: deterministic (Python); количество не определяется текстом модели."
+        },
+        {
+          "code": "SYNTHETIC_INPUT",
+          "severity": "INFO",
+          "message": "Вход помечен как синтетический пример."
+        },
+        {
+          "code": "RESULT_SOURCES",
+          "severity": "INFO",
+          "message": "analysis=mock; calculation=deterministic; explanation=template"
+        }
+      ],
+      "assumptions": [
+        "Покрытие = срок поставки + период пересмотра; forecastHorizonMonths не добавляется повторно.",
+        "Используются только полностью завершённые календарные месяцы до asOfDate.",
+        "Отсутствующие месяцы не считаются нулевыми продажами.",
+        "Дополнительный прирост применяется один раз поверх простого статистического тренда.",
+        "Тренд: отношение средней интенсивности последней половины истории к первой, ограничено 0.75–1.25.",
+        "История делится на её сезонные коэффициенты, прогноз умножается на будущие коэффициенты один раз.",
+        "Вычитаются только поставки после asOfDate и не позже asOfDate + leadTimeDays; агрегат inTransit повторно не добавляется."
+      ],
+      "source": "fallback",
+      "is_demo": true
+    }
+  ],
+  "warnings": [
+    {
+      "code": "MOCK_ANALYSIS",
+      "severity": "INFO",
+      "message": "Анализ аномалий демонстрационный; OpenAI не вызывался. Предложения не меняют расчёт."
+    },
+    {
+      "code": "PYTHON_BASELINE",
+      "severity": "INFO",
+      "message": "Источник расчёта: deterministic (Python); количество не определяется текстом модели."
+    },
+    {
+      "code": "SYNTHETIC_INPUT",
+      "severity": "INFO",
+      "message": "Вход помечен как синтетический пример."
+    },
+    {
+      "code": "RESULT_SOURCES",
+      "severity": "INFO",
+      "message": "analysis=mock; calculation=deterministic; explanation=template"
+    }
+  ],
+  "assumptions": [
+    "Покрытие = срок поставки + период пересмотра; forecastHorizonMonths не добавляется повторно.",
+    "Используются только полностью завершённые календарные месяцы до asOfDate.",
+    "Отсутствующие месяцы не считаются нулевыми продажами.",
+    "Дополнительный прирост применяется один раз поверх простого статистического тренда.",
+    "Тренд: отношение средней интенсивности последней половины истории к первой, ограничено 0.75–1.25.",
+    "История делится на её сезонные коэффициенты, прогноз умножается на будущие коэффициенты один раз.",
+    "Вычитаются только поставки после asOfDate и не позже asOfDate + leadTimeDays; агрегат inTransit повторно не добавляется."
+  ],
+  "source": "fallback",
+  "is_demo": true,
+  "versions": {
+    "algorithm": "calendar-baseline-0.1.0",
+    "schemaVersion": "1.1",
+    "nvidiaPrompt": "not-used",
+    "openaiPrompt": "not-used"
+  }
+}

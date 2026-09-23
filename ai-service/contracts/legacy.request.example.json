@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "1.1",
+  "requestId": "93a40813-12dd-4aef-829d-4803251f6814",
+  "asOfDate": "2026-09-22",
+  "currency": "KZT",
+  "settings": {
+    "historyMonths": 12,
+    "forecastHorizonMonths": 2,
+    "leadTimeDays": 30,
+    "reviewPeriodDays": 30,
+    "safetyStockDays": 14,
+    "excludePartialMonth": true,
+    "availableStockPolicy": "FREE_PLUS_IN_TRANSIT",
+    "anomalyReviewEnabled": true,
+    "explanationMode": "IMPORTANT_ONLY",
+    "maxAIExplanations": 50
+  },
+  "products": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "article": "000017",
+      "name": "Демонстрационный товар",
+      "supplier": "Демо-поставщик",
+      "category": "1",
+      "unit": "шт",
+      "minimumOrderQuantity": 10,
+      "orderMultiple": 5,
+      "unitCost": null,
+      "additionalGrowthRate": 0.05
+    }
+  ],
+  "salesHistory": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "rowId": "sale-demo-001",
+      "date": "2026-08-10",
+      "quantity": 30
+    },
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "rowId": "sale-demo-002",
+      "date": "2026-08-11",
+      "quantity": null
+    }
+  ],
+  "monthlySales": [{"code1C": "000317_", "month": "2026-08", "quantity": 30}],
+  "monthlyStock": [{"code1C": "000317_", "month": "2026-08", "quantity": null}],
+  "inventory": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "stockAsOfDate": "2026-09-22",
+      "totalStock": 20,
+      "reservedStock": 5,
+      "freeStock": 15,
+      "inTransit": 10
+    }
+  ],
+  "incomingShipments": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "rowId": "shipment-demo-001",
+      "quantity": 10,
+      "expectedDate": "2026-10-01"
+    }
+  ],
+  "seasonality": [{"month": 10, "coefficient": 0.954}],
+  "availability": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-31",
+      "available": null,
+      "stockoutDays": 2
+    }
+  ],
+  "transactions": [
+    {
+      "code1C": "000317_",
+      "warehouseId": "warehouse-demo",
+      "supplierId": "supplier-demo",
+      "transactionId": "order-demo-001",
+      "date": "2026-08-10",
+      "quantity": 30,
+      "clientId": "anonymous-demo-client"
+    }
+  ]
+}
