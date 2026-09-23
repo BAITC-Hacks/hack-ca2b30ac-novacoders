@@ -1,0 +1,10 @@
+import { Check, CircleHelp, Cpu, Minus, RotateCcw } from 'lucide-react'
+import type { Anomaly, AnomalyDecision, Mode } from '../types/api'
+import { formatDate, formatNumber } from '../lib/format'
+
+export default function AnomalyReview({ anomalies, mode, busy, onDecision }: { anomalies: Anomaly[]; mode: Mode; busy: boolean; onDecision: (id: string, decision: AnomalyDecision) => void }) {
+  if (!anomalies.length) return null
+  return <>{anomalies.map((anomaly) => <section className="anomaly-card" key={anomaly.id}><div className="anomaly-title"><span><Cpu size={18} /> {anomaly.source === 'NVIDIA' ? 'Проверка NVIDIA' : 'Проверка аномалии'}</span><span className="tiny-badge">{mode === 'demo' ? 'Демо' : 'Анализ операции'}</span></div><h4>{anomaly.classification}</h4><p className="muted">Операция от {formatDate(anomaly.date)}</p><dl className="anomaly-metrics"><div><dt>Объём продажи</dt><dd>{formatNumber(anomaly.quantity)} <small>шт.</small></dd></div><div><dt>Обычный заказ</dt><dd>≈ {formatNumber(anomaly.typicalQuantity)} <small>шт.</small></dd></div><div><dt>Доля в месяце</dt><dd>{formatNumber(anomaly.monthShare)}<small>%</small></dd></div></dl><p className="anomaly-reason">{anomaly.reason}</p><div className="confidence">Уверенность: <strong>{anomaly.confidence}</strong></div>
+    {anomaly.reviewable ? <div className="anomaly-actions"><button disabled={busy} aria-pressed={anomaly.decision === 'EXCLUDE'} onClick={() => onDecision(anomaly.id, 'EXCLUDE')}><Minus size={14} /> Исключить из регулярного спроса{anomaly.decision === 'EXCLUDE' && <Check size={14} />}</button><button disabled={busy} aria-pressed={anomaly.decision === 'REGULAR'} onClick={() => onDecision(anomaly.id, 'REGULAR')}><RotateCcw size={14} /> Считать регулярным спросом{anomaly.decision === 'REGULAR' && <Check size={14} />}</button><button disabled={busy} aria-pressed={anomaly.decision === 'REVIEW'} onClick={() => onDecision(anomaly.id, 'REVIEW')}><CircleHelp size={14} /> Оставить на проверку{anomaly.decision === 'REVIEW' && <Check size={14} />}</button></div> : <p className="quiet-note">Недостаточно данных API для подтверждения этой аномалии.</p>}
+  </section>)}</>
+}

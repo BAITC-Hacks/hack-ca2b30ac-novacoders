@@ -1,0 +1,11 @@
+{
+  "folders": [{ "path": "." }],
+  "settings": {
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "editor.tabSize": 2,
+    "files.eol": "\n"
+  },
+  "extensions": {
+    "recommendations": ["bradlc.vscode-tailwindcss", "dbaeumer.vscode-eslint"]
+  }
+}
