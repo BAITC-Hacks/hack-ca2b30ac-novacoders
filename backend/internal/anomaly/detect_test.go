@@ -85,7 +85,12 @@ func TestReconciliationToleranceAndMissingSource(t *testing.T) {
 		t.Fatal("difference above 1% should require review")
 	}
 	delete(p.MonthlySales, "2026-08")
-	if warnings := Reconcile(p, domain.DatasetDate()); len(warnings) != 1 {
+	if warnings := Reconcile(p, domain.DatasetDate()); len(warnings) != 1 || warnings[0].Code != "SOURCE_COMPARISON_UNAVAILABLE" {
 		t.Fatal("missing monthly source must not be treated as zero")
+	}
+	p.MonthlySales["2026-08"] = 101.01
+	p.Transactions[0].QuantityMissing = true
+	if warnings := Reconcile(p, domain.DatasetDate()); len(warnings) != 1 || warnings[0].Code != "SOURCE_COMPARISON_UNAVAILABLE" {
+		t.Fatal("unknown operation must not be reconciled as zero")
 	}
 }

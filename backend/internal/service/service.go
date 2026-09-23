@@ -52,7 +52,7 @@ func (s *Service) CreateRun(ctx context.Context, cfg domain.RunConfig) (*domain.
 		}
 	}
 	sort.Strings(codes)
-	r := &domain.CalculationRun{DatasetID: d.ID, CreatedAt: time.Now().UTC(), Config: cfg, Items: []domain.Item{}}
+	r := &domain.CalculationRun{DatasetID: d.ID, AsOf: d.AsOf, CreatedAt: time.Now().UTC(), Config: cfg, Items: []domain.Item{}}
 	for _, code := range codes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -73,7 +73,7 @@ func (s *Service) CreateRun(ctx context.Context, cfg domain.RunConfig) (*domain.
 }
 
 func (s *Service) Patch(ctx context.Context, id, code string, patch domain.ManagerPatch) (*domain.CalculationRun, error) {
-	if patch.ApprovedQuantity == nil && patch.AnomalyDecision == nil && patch.Comment == nil {
+	if patch.ApprovedQuantity == nil && patch.Approved == nil && patch.AnomalyDecision == nil && patch.Comment == nil {
 		return nil, fmt.Errorf("%w: пустое изменение", ErrInvalid)
 	}
 	if patch.ApprovedQuantity != nil {
@@ -82,7 +82,10 @@ func (s *Service) Patch(ctx context.Context, id, code string, patch domain.Manag
 			return nil, fmt.Errorf("%w: approvedQuantity — целое число 0–1e12", ErrInvalid)
 		}
 	}
-	if patch.AnomalyDecision != nil && *patch.AnomalyDecision != "EXCLUDE" && *patch.AnomalyDecision != "KEEP" {
+	if patch.Approved != nil && *patch.Approved && patch.ApprovedQuantity == nil {
+		return nil, fmt.Errorf("%w: для подтверждения укажите approvedQuantity", ErrInvalid)
+	}
+	if patch.AnomalyDecision != nil && *patch.AnomalyDecision != "" && *patch.AnomalyDecision != "EXCLUDE" && *patch.AnomalyDecision != "KEEP" {
 		return nil, fmt.Errorf("%w: anomalyDecision должен быть EXCLUDE или KEEP", ErrInvalid)
 	}
 	if patch.Comment != nil && len(*patch.Comment) > 4000 {
@@ -123,14 +126,21 @@ func (s *Service) Patch(ctx context.Context, id, code string, patch domain.Manag
 				item.ManagerComment = *patch.Comment
 			}
 			item.ApprovedQuantity = old.ApprovedQuantity
+			item.Approved = old.Approved
 			if patch.AnomalyDecision != nil && decision != old.AnomalyDecision {
 				item.ApprovedQuantity = nil
+				item.Approved = false
 			} // Changed evidence invalidates an old approval.
 			if patch.ApprovedQuantity != nil {
 				quantity := *patch.ApprovedQuantity
 				item.ApprovedQuantity = &quantity
+				item.Approved = true // Compatibility for the legacy CLI endpoint.
 			}
-			if item.ApprovedQuantity != nil {
+			if patch.Approved != nil {
+				item.Approved = *patch.Approved
+			}
+			item.UpdatedAt = time.Now().UTC()
+			if item.Approved && item.ApprovedQuantity != nil {
 				item.FinalQuantity = *item.ApprovedQuantity
 				if item.Breakdown.OrderMultiple > 0 && math.Mod(item.FinalQuantity, float64(item.Breakdown.OrderMultiple)) != 0 {
 					item.Warnings = append(item.Warnings, domain.Diagnostic{Code: "MANAGER_QUANTITY_NOT_MULTIPLE", Message: "Подтверждённое менеджером количество не кратно поставке."})

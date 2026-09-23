@@ -1,29 +1,27 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Database, LoaderCircle, ShieldCheck, Warehouse } from 'lucide-react'
-import type { Capabilities, Dataset, Mode, RunParams } from '../types/api'
+import { ArrowLeft, ArrowRight, CheckCircle2, LoaderCircle } from 'lucide-react'
+import type { ImportResult, RunParams } from '../api/types'
 import { formatDate, formatNumber } from '../lib/format'
 import { DataWarnings, ErrorNotice } from './DataWarnings'
 import { validRunParams } from '../lib/workflow'
 
-function Toggle({ title, description, checked, onChange, disabled }: { title: string; description: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
-  return <label className="toggle-row"><div><strong>{title}</strong><span>{description}</span></div><input type="checkbox" role="switch" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} /><span className="toggle-track" aria-hidden="true" /></label>
-}
-interface Props { dataset: Dataset; params: RunParams; capabilities: Capabilities; mode: Mode; loading: boolean; error: string | null; onChange: (params: RunParams) => void; onRun: () => void; onBack: () => void }
-export default function CalculationSettings({ dataset, params, capabilities, mode, loading, error, onChange, onRun, onBack }: Props) {
+interface Props { dataset: ImportResult; params: RunParams; loading: boolean; error: string | null; onChange: (params: RunParams) => void; onRun: () => void; onBack: () => void }
+export default function CalculationSettings({ dataset, params, loading, error, onChange, onRun, onBack }: Props) {
   const valid = validRunParams(params)
   const update = <K extends keyof RunParams>(key: K, value: RunParams[K]) => onChange({ ...params, [key]: value })
+  const numericFields = [
+    { key: 'forecastHorizonMonths', title: 'Горизонт прогноза', unit: 'мес.', min: 1, max: 36 },
+    { key: 'leadTimeDays', title: 'Срок поставки', unit: 'дней', min: 1, max: 365 },
+    { key: 'safetyStockDays', title: 'Страховой запас', unit: 'дней', min: 0, max: 365 },
+  ] as const
   return <div className="configure-layout animate-in"><div className="space-y-5">
-    <section className="panel"><div className="panel-heading"><div><h2>Условия поставки</h2><p>Параметры применяются ко всем товарам набора</p></div></div><div className="settings-body">
-      <div className="field-grid"><label className="field">Поставщик<div className="readonly-field"><Warehouse size={16} /> {dataset.supplier}</div></label><label className="field">Срок поставки<div className="number-field"><input aria-label="Срок поставки" type="number" min="1" max="365" step="1" value={Number.isNaN(params.leadTimeDays) ? '' : params.leadTimeDays} disabled={loading} onChange={(e) => update('leadTimeDays', e.target.value === '' ? NaN : Number(e.target.value))} /><span>дней</span></div></label><label className="field">Страховой запас<div className="number-field"><input aria-label="Страховой запас" type="number" min="0" max="365" step="1" value={Number.isNaN(params.safetyDays) ? '' : params.safetyDays} disabled={loading} onChange={(e) => update('safetyDays', e.target.value === '' ? NaN : Number(e.target.value))} /><span>дней</span></div></label></div>
-      {!valid && <p role="alert" className="field-error">Срок поставки: 1–365 дней. Страховой запас: 0–365 дней. Только целые числа.</p>}
-      <div className="settings-section-title"><h3>Доступный остаток</h3></div>
-      <Toggle title="Учитывать остаток витрины" description="Товары на выставочных стендах" checked={params.includeShowcase} onChange={(v) => update('includeShowcase', v)} disabled={loading} />
-      <Toggle title="Учитывать остаток ТЗ" description="Товары в торговом зале" checked={params.includeTZStock} onChange={(v) => update('includeTZStock', v)} disabled={loading} />
-      <Toggle title="Учитывать розничный склад" description="Запасы розничного подразделения" checked={params.includeRetailStock} onChange={(v) => update('includeRetailStock', v)} disabled={loading} />
-      {(capabilities.nvidiaReview || capabilities.openaiExplanation) && <><div className="settings-section-title"><h3>Дополнительный анализ</h3>{mode === 'demo' && <span className="soft-badge">Имитация в демо</span>}</div>
-      {capabilities.nvidiaReview && <Toggle title="NVIDIA · проверка аномалий" description="Разбор нетипично крупных операций" checked={params.useNvidiaReview} onChange={(v) => update('useNvidiaReview', v)} disabled={loading} />}
-      {capabilities.openaiExplanation && <Toggle title="OpenAI · объяснение рекомендаций" description="Короткий вывод для закупщика по каждой позиции" checked={params.useOpenAIExplanation} onChange={(v) => update('useOpenAIExplanation', v)} disabled={loading} />}</>}
-    </div><div className="settings-actions"><button className="btn btn-secondary" onClick={onBack} disabled={loading}><ArrowLeft size={16} /> К файлам</button><button className="btn btn-primary" onClick={onRun} disabled={loading || !valid || !dataset.usable}>{loading && <LoaderCircle size={17} className="spin" />}{loading ? 'Выполняется расчёт…' : 'Рассчитать заказ'}{!loading && <ArrowRight size={17} />}</button></div></section>
-    <ErrorNotice message={error} onRetry={loading ? undefined : onRun} />
-    {loading && <div className="panel calculating" role="status"><div className="flex items-center gap-3"><LoaderCircle size={20} className="spin" /><strong>{mode === 'demo' ? 'Подготовка демонстрационного ответа' : 'Сервер выполняет расчёт'}</strong></div><p>Анализ продаж → Поиск аномалий → Учёт сезонности и stockout → Расчёт заказа → Подготовка объяснений</p><div className="indeterminate" /><small>Ожидаем завершённый ответ. Процент и текущий этап API не передаёт.</small></div>}
-  </div><aside className="space-y-5"><section className="panel dataset-card"><span className="success-icon"><CheckCircle2 size={25} /></span><h2>Данные проверены</h2><p>{dataset.supplier} · {dataset.warehouse}</p><dl className="import-summary"><div><dt>Товаров найдено</dt><dd>{formatNumber(dataset.productsFound)}</dd></div><div><dt><Check size={15} /> Сопоставлено</dt><dd>{formatNumber(dataset.matchedProducts)}</dd></div><div><dt>Требуют проверки</dt><dd className="text-amber-700">{formatNumber(dataset.reviewProducts)}</dd></div></dl><div className="dataset-date"><Database size={16} /> На {formatDate(dataset.asOf)}</div></section><DataWarnings warnings={dataset.warnings} compact /><p className="quiet-note"><ShieldCheck size={16} /> Вы проверите рекомендации перед формированием заказа.</p></aside></div>
+    <section className="panel"><div className="panel-heading"><div><h2>Условия поставки</h2><p>Параметры применяются ко всем товарам {dataset.supplier}</p></div></div><div className="settings-body">
+      <div className="field-grid">{numericFields.map(({ key, title, unit, min, max }) => <label key={key} className="field">{title}<div className="number-field"><input aria-label={title} type="number" min={min} max={max} step="1" value={Number.isNaN(params[key]) ? '' : params[key]} disabled={loading} onChange={(e) => update(key, e.target.value === '' ? NaN : Number(e.target.value))} /><span>{unit}</span></div></label>)}</div>
+      {!valid && <p role="alert" className="field-error">Горизонт: 1–36 месяцев. Срок поставки: 1–365 дней. Запас: 0–365 дней. Только целые числа.</p>}
+      <label className="toggle-row"><div><strong>Исключать неполный месяц</strong><span>Не использовать незавершённый месяц при оценке спроса</span></div><input type="checkbox" role="switch" aria-label="Исключать неполный месяц" checked={params.excludePartialMonth} onChange={(e) => update('excludePartialMonth', e.target.checked)} disabled={loading} /><span className="toggle-track" aria-hidden="true" /></label>
+      <p className="quiet-note">Доступный запас включает свободный остаток и товар в пути.</p>
+    </div><div className="settings-actions"><button className="btn btn-secondary" onClick={onBack} disabled={loading}><ArrowLeft size={16} /> К файлам</button><button className="btn btn-primary" onClick={onRun} disabled={loading || !valid || dataset.summary.productsFound === 0}>{loading ? <LoaderCircle size={17} className="spin" /> : <ArrowRight size={17} />}{loading ? 'Выполняется расчёт…' : 'Рассчитать заказ'}</button></div></section>
+    <ErrorNotice message={error} onRetry={loading || !valid ? undefined : onRun} />
+    {loading && <div className="panel calculating" role="status"><strong>Формируем рекомендации</strong><p>Проверяем спрос, сезонность и остатки. Дождитесь результата.</p><div className="indeterminate" /></div>}
+    <section className="panel file-validation"><div className="panel-heading"><h2>Результат проверки файлов</h2></div><ul>{dataset.files.map((file) => <li key={file.type}><div><strong>{file.fileName}</strong><span>{formatNumber(file.rows)} строк</span></div><span className={`soft-badge ${file.status === 'WARNING' ? 'text-amber-700' : ''}`}>{file.status === 'VALID' ? 'Проверен' : 'Есть замечания'}</span></li>)}</ul></section>
+  </div><aside className="space-y-5"><section className="panel dataset-card"><span className="success-icon"><CheckCircle2 size={25} /></span><h2>Импорт завершён</h2><p>{dataset.supplier} · На {formatDate(dataset.asOf)}</p><dl className="import-summary"><div><dt>Товаров найдено</dt><dd>{formatNumber(dataset.summary.productsFound)}</dd></div><div><dt>Без замечаний</dt><dd>{formatNumber(dataset.summary.productsReady)}</dd></div><div><dt>Требуют проверки</dt><dd>{formatNumber(dataset.summary.productsWithWarnings)}</dd></div></dl></section><DataWarnings warnings={dataset.warnings} compact /></aside></div>
 }

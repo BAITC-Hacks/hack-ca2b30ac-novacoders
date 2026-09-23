@@ -24,16 +24,27 @@ import (
 const MaxUploadBytes int64 = 6*importer.MaxFileBytes + (1 << 20)
 
 type API struct {
-	service *service.Service
-	logger  *slog.Logger
-	origins map[string]bool
+	service       *service.Service
+	logger        *slog.Logger
+	origins       map[string]bool
+	localDataRoot string // Shared with importLocal in local.go; configured at startup.
 }
 
-func New(s *service.Service, logger *slog.Logger, origins []string) http.Handler {
+type Option func(*API)
+
+// WithLocalDatasets enables importing supplier workbooks from a server folder.
+func WithLocalDatasets(root string) Option {
+	return func(a *API) { a.localDataRoot = root }
+}
+
+func New(s *service.Service, logger *slog.Logger, origins []string, options ...Option) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	a := &API{service: s, logger: logger, origins: map[string]bool{}}
+	for _, option := range options {
+		option(a)
+	}
 	for _, o := range origins {
 		if o = strings.TrimSpace(o); o != "" {
 			a.origins[o] = true
@@ -68,12 +79,57 @@ func (a *API) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 	switch {
+	case path == "api/v1/imports/local":
+		if !method(w, r, "POST") {
+			return
+		}
+		a.importLocal(w, r)
+	case path == "api/v1/imports":
+		if !method(w, r, "POST") {
+			return
+		}
+		a.importFiles(w, r, true)
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "imports":
+		if !method(w, r, "GET") {
+			return
+		}
+		d, err := a.service.Store.Dataset(parts[3])
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+		writeJSON(w, 200, importResult(d))
+	case len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "imports" && parts[4] == "recommendations":
+		if !method(w, r, "POST") {
+			return
+		}
+		a.createRecommendations(w, r, parts[3])
+	case len(parts) == 4 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "recommendations":
+		if !method(w, r, "GET") {
+			return
+		}
+		run, err := a.service.Store.Run(parts[3])
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+		writeJSON(w, 200, runResult(run))
+	case len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "recommendations" && parts[4] == "items":
+		if !method(w, r, "PATCH") {
+			return
+		}
+		a.patchRecommendation(w, r, parts[3], parts[5])
+	case len(parts) == 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "recommendations" && parts[4] == "export":
+		if !method(w, r, "POST") {
+			return
+		}
+		a.export(w, r, parts[3])
 	case path == "healthz":
 		if !method(w, r, "GET") {
 			return
@@ -83,7 +139,7 @@ func (a *API) serve(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") {
 			return
 		}
-		a.importFiles(w, r)
+		a.importFiles(w, r, false)
 	case path == "api/v1/runs":
 		if !method(w, r, "POST") {
 			return
@@ -183,7 +239,7 @@ func badJSON(w http.ResponseWriter, err error) {
 	jsonError(w, 400, "INVALID_JSON", "Некорректный JSON, тип поля или неизвестное поле.", nil)
 }
 
-func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
+func (a *API) importFiles(w http.ResponseWriter, r *http.Request, canonical bool) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "multipart/form-data" {
 		jsonError(w, 415, "UNSUPPORTED_MEDIA_TYPE", "Ожидается multipart/form-data.", nil)
@@ -205,7 +261,7 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	allowed := map[string]bool{}
 	for _, field := range importer.Fields {
-		allowed[field] = true
+		allowed[uploadField(field, canonical)] = true
 	}
 	for name := range r.MultipartForm.File {
 		if !allowed[name] {
@@ -230,9 +286,10 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 	files := map[string]io.Reader{}
 	fileNames := map[string]string{}
 	for _, field := range importer.Fields {
-		parts := r.MultipartForm.File[field]
+		name := uploadField(field, canonical)
+		parts := r.MultipartForm.File[name]
 		if len(parts) != 1 {
-			jsonError(w, 400, "MISSING_OR_DUPLICATE_FILE", "Требуется один файл в поле "+field+".", nil)
+			jsonError(w, 400, "MISSING_OR_DUPLICATE_FILE", "Требуется один файл в поле "+name+".", nil)
 			return
 		}
 		if parts[0].Size > importer.MaxFileBytes {
@@ -266,6 +323,10 @@ func (a *API) importFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.logger.Info("import_completed", "dataset_id", d.ID, "products", len(d.Products))
+	if canonical {
+		writeJSON(w, 201, importResult(d))
+		return
+	}
 	writeJSON(w, 201, importResponse(d))
 }
 
@@ -290,7 +351,7 @@ func (a *API) export(w http.ResponseWriter, r *http.Request, id string) {
 	writer := csv.NewWriter(&buffer)
 	_ = writer.Write([]string{"supplier", "code_1c", "article", "name", "quantity", "estimated_cost", "decision", "manager_comment"})
 	for _, i := range run.Items {
-		if i.ApprovedQuantity == nil || *i.ApprovedQuantity <= 0 {
+		if !i.Approved || i.ApprovedQuantity == nil || *i.ApprovedQuantity <= 0 {
 			continue
 		}
 		exported++
@@ -312,6 +373,9 @@ func (a *API) export(w http.ResponseWriter, r *http.Request, id string) {
 	a.logger.Info("export_completed", "run_id", run.ID, "items", exported)
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+run.ID+`.csv"`)
+	if strings.HasPrefix(r.URL.Path, "/api/v1/recommendations/") {
+		w.Header().Set("Content-Disposition", `attachment; filename="supplier-order.csv"`)
+	}
 	w.WriteHeader(200)
 	_, _ = w.Write(buffer.Bytes())
 }

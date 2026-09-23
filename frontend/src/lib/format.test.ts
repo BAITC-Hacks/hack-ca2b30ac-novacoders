@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { formatMoney, quantityError, quantityWarning, sortItems } from './format'
-import type { RecommendationItem } from '../types/api'
+import type { RecommendationItem } from '../api/types'
 
 describe('Manager quantity validation', () => {
   it('accepts zero and whole quantities, rejects invalid and unsafe values', () => {
     for (const value of ['0', '10', '100']) expect(quantityError(value)).toBeNull()
-    for (const value of ['', '-1', '1.5', '1e3', 'NaN', '9007199254740992']) expect(quantityError(value)).not.toBeNull()
+    for (const value of ['', '-1', '1.5', '1e3', 'NaN', '9007199254740992', '1000000000001']) expect(quantityError(value)).not.toBeNull()
   })
   it('warns without silently rounding, and allows zero', () => {
     expect(quantityWarning('0', 10, 10)).toBeNull()
@@ -20,11 +20,11 @@ describe('Manager quantity validation', () => {
   })
 })
 describe('Recommendation priority', () => {
-  it('puts review before critical buy, other buy and no-buy, without mutating input', () => {
+  it('puts review before high-priority buy, other buy and no-buy, without mutating input', () => {
     const items = [
       { name: 'A', decision: 'NO_BUY', urgency: 'LOW' },
       { name: 'B', decision: 'BUY', urgency: 'LOW' },
-      { name: 'C', decision: 'BUY', urgency: 'CRITICAL' },
+      { name: 'C', decision: 'BUY', urgency: 'HIGH' },
       { name: 'D', decision: 'REVIEW', urgency: 'LOW' },
     ] as RecommendationItem[]
     expect(sortItems(items).map((item) => item.name)).toEqual(['D', 'C', 'B', 'A'])

@@ -359,7 +359,7 @@ func TestForecastValidatesHorizonWithoutHTTP(t *testing.T) {
 
 func TestCostAndSummaryUseApprovedQuantity(t *testing.T) {
 	price, approved := 2.55, 3.0
-	item := domain.Item{Decision: "BUY", RecommendedQuantity: 10, FinalQuantity: approved, ApprovedQuantity: &approved, UnitCost: &price}
+	item := domain.Item{Decision: "BUY", RecommendedQuantity: 10, FinalQuantity: approved, ApprovedQuantity: &approved, Approved: true, UnitCost: &price}
 	SetCost(&item)
 	if item.EstimatedCost == nil || *item.EstimatedCost != 7.65 {
 		t.Fatalf("cost must use 3 approved units: %+v", item)
@@ -367,6 +367,10 @@ func TestCostAndSummaryUseApprovedQuantity(t *testing.T) {
 	s := Summarize([]domain.Item{item, {Decision: "REVIEW", FinalQuantity: 2}, {Decision: "NO_BUY"}})
 	if s.Buy != 1 || s.NoBuy != 1 || s.Review != 1 || s.TotalUnits != 5 || s.EstimatedCost != 7.65 || s.UnpricedItems != 1 || s.ApprovedItems != 1 {
 		t.Fatalf("%+v", s)
+	}
+	item.Approved = false
+	if Summarize([]domain.Item{item}).ApprovedItems != 0 {
+		t.Fatal("draft quantity counted as an approval")
 	}
 }
 

@@ -56,7 +56,7 @@ func ImportSupplier(ctx context.Context, files map[string]io.Reader, supplier st
 		return nil, &ValidationError{Diagnostics: domain.ImportDiagnostics{Errors: []domain.Diagnostic{{Code: "INVALID_SUPPLIER", Message: "supplier: SystemElectric или IEK"}}}}
 	}
 	d := &domain.Dataset{Supplier: supplier, SourceFiles: map[string]string{}, AsOf: domain.DatasetDate(), Products: map[string]*domain.Product{}, Seasonality: map[int]float64{}, Diagnostics: domain.ImportDiagnostics{ProcessedRows: map[string]int{}, SkippedTotalRows: map[string]int{}, ProductsWithoutMOQ: []string{}, ProductsWithoutSales: []string{}, ProductsWithoutCurrentStock: []string{}, SourceConflicts: []domain.Diagnostic{}, Warnings: []domain.Diagnostic{}, Errors: []domain.Diagnostic{}}}
-	d.Diagnostics.Warnings = append(d.Diagnostics.Warnings, domain.Diagnostic{Code: "PARTIAL_CURRENT_MONTH", Message: "Сентябрь 2026 исключён из полных месяцев; расчётный период: сентябрь 2025 — август 2026."})
+	d.Diagnostics.Warnings = append(d.Diagnostics.Warnings, domain.Diagnostic{Severity: "INFO", Code: "PARTIAL_CURRENT_MONTH", Message: "Данные на " + d.AsOf.Format("02.01.2006") + ": текущий месяц неполный. Его включение в расчёт определяется параметром excludePartialMonth."})
 	fatal := false
 	for _, field := range Fields {
 		if err := ctx.Err(); err != nil {
@@ -157,8 +157,9 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			continue
 		}
 		d.Diagnostics.ProcessedRows[field]++
+		issueMonth := ""
 		issue := func(code, message, sku string, blocking bool) domain.Diagnostic {
-			return domain.Diagnostic{Code: code, Message: message, File: field, Sheet: h.sheet, Row: rowNumber, Code1C: sku, Blocking: blocking}
+			return domain.Diagnostic{Code: code, Message: message, File: field, Sheet: h.sheet, Row: rowNumber, Code1C: sku, Month: issueMonth, Blocking: blocking}
 		}
 		if field == "seasonality" {
 			m := cell(row, h.columns["month"])
@@ -244,6 +245,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			sort.Ints(cols)
 			for _, col := range cols {
 				month := h.months[col]
+				issueMonth = month
 				v, ok, err := number(cell(raw, col))
 				if err != nil {
 					bad("Некорректное число за " + month + ".")
@@ -277,21 +279,18 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 			if err != nil {
 				// Date display formats are arbitrary in Excel; fall back to the
 				// raw serial value while keeping codes in their displayed format.
-				address, _ := excelize.CoordinatesToCellName(h.columns["date"]+1, rowNumber)
-				if raw, rawErr := f.GetCellValue(h.sheet, address, excelize.Options{RawCellValue: true}); rawErr == nil {
-					date, err = parseDate(raw, h.date1904)
-				}
+				date, err = parseDate(cell(raw, h.columns["date"]), h.date1904)
 			}
 			if err != nil || !date.Before(d.AsOf.AddDate(0, 0, 1)) {
 				bad("Некорректная дата операции или дата позже среза 22.09.2026.")
 				continue
 			}
+			issueMonth = date.Format("2006-01")
 			quantity, ok, err := number(cell(raw, h.columns["quantity"]))
 			if err != nil {
-				bad("Некорректное количество операции.")
-				continue
-			}
-			if !ok {
+				bad("Некорректное количество операции; передаётся как null.")
+				quantity, ok = 0, false
+			} else if !ok {
 				warn("UNKNOWN_TRANSACTION_QUANTITY", "Количество операции отсутствует; передаётся как null.", true)
 			}
 			doc := cell(row, h.columns["number"])
@@ -348,7 +347,7 @@ func readFile(ctx context.Context, d *domain.Dataset, field string, r io.Reader)
 				continue
 			}
 			v, ok, err := number(cell(raw, col))
-			if err != nil {
+			if err != nil || (ok && v < 0) {
 				warn("INVALID_UNIT_COST", "Некорректная себестоимость; оценка стоимости недоступна.", false)
 			} else if ok {
 				p.UnitCost = &v

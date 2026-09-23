@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -29,7 +30,8 @@ func main() {
 	}
 	aiURL := os.Getenv("AI_SERVICE_URL")
 	if aiURL == "" {
-		aiURL = "http://127.0.0.1:8001"
+		logger.Error("missing_ai_service_url", "message", "Укажите AI_SERVICE_URL, например http://127.0.0.1:8001")
+		os.Exit(1)
 	}
 	client, err := recommendation.NewClient(aiURL)
 	if err != nil {
@@ -37,7 +39,21 @@ func main() {
 		os.Exit(1)
 	}
 	svc := &service.Service{Store: store.New(), Recommender: client}
-	server := &http.Server{Addr: address, Handler: httptransport.New(svc, logger, strings.Split(origins, ",")), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	cwd, err := os.Getwd()
+	if err != nil {
+		logger.Error("working_directory_unavailable", "error", err)
+		os.Exit(1)
+	}
+	dataRoot := localDataDirectory(cwd, os.Getenv("DATA_DEMO_DIR"))
+	server := &http.Server{
+		Addr:              address,
+		Handler:           httptransport.New(svc, logger, strings.Split(origins, ","), httptransport.WithLocalDatasets(dataRoot)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       90 * time.Second,
+		WriteTimeout:      90 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	failed := make(chan error, 1)
@@ -57,4 +73,19 @@ func main() {
 		}
 		logger.Info("server_stopped")
 	}
+}
+
+// Resolve the default against the backend module when launched from the repo
+// root. Explicit DATA_DEMO_DIR values remain relative to the working directory.
+func localDataDirectory(cwd, configured string) string {
+	if configured != "" {
+		if filepath.IsAbs(configured) {
+			return filepath.Clean(configured)
+		}
+		return filepath.Join(cwd, configured)
+	}
+	if info, err := os.Stat(filepath.Join(cwd, "backend", "go.mod")); err == nil && info.Mode().IsRegular() {
+		return filepath.Join(cwd, "backend", "data", "demo")
+	}
+	return filepath.Join(cwd, "data", "demo")
 }

@@ -2,6 +2,7 @@
 package anomaly
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -44,8 +45,10 @@ func Reconcile(p *domain.Product, asOf time.Time) []domain.Diagnostic {
 	issues := []domain.Diagnostic{}
 	for _, m := range months {
 		monthly, ok := p.MonthlySales[m]
-		if unknown[m] || !ok || math.Abs(monthly-totals[m]) > math.Max(.01, math.Abs(monthly)*.01) {
-			issues = append(issues, domain.Diagnostic{Code: "SOURCE_CONFLICT", Message: "Месячные и детальные продажи не согласованы или месячная запись отсутствует.", Code1C: p.Code1C, Month: m, Blocking: true})
+		if unknown[m] || !ok {
+			issues = append(issues, domain.Diagnostic{Code: "SOURCE_COMPARISON_UNAVAILABLE", Message: "Сверка продаж за " + m + " невозможна: месячное значение отсутствует или количество части операций неизвестно.", Code1C: p.Code1C, Month: m, Blocking: true})
+		} else if math.Abs(monthly-totals[m]) > math.Max(.01, math.Abs(monthly)*.01) {
+			issues = append(issues, domain.Diagnostic{Code: "SOURCE_CONFLICT", Message: fmt.Sprintf("За %s: месячные продажи %g, сумма детальных продаж с возвратами %g; расхождение превышает 1%% (минимум 0,01).", m, monthly, totals[m]), Code1C: p.Code1C, Month: m, Blocking: true})
 		}
 	}
 	return issues

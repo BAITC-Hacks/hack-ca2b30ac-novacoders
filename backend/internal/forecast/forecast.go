@@ -338,7 +338,7 @@ func Summarize(items []domain.Item) domain.Summary {
 		} else if i.FinalQuantity > 0 {
 			s.UnpricedItems++
 		}
-		if i.ApprovedQuantity != nil {
+		if i.Approved && i.ApprovedQuantity != nil {
 			s.ApprovedItems++
 		}
 	}

@@ -42,7 +42,7 @@ func NewClient(baseURL string) (*Client, error) {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("AI_SERVICE_URL должен быть HTTP(S) URL без credentials, query и fragment")
 	}
-	return &Client{endpoint: strings.TrimRight(baseURL, "/") + "/v1/recommendations", http: &http.Client{Timeout: 50 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{endpoint: strings.TrimRight(baseURL, "/") + "/v1/recommendations", http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 type Result struct {

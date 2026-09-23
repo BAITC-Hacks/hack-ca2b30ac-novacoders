@@ -36,7 +36,7 @@ func (s *Service) createRemoteRun(ctx context.Context, cfg domain.RunConfig) (*d
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	run := &domain.CalculationRun{DatasetID: d.ID, CreatedAt: time.Now().UTC(), Config: cfg, AIResponse: result.Raw, Items: []domain.Item{}}
+	run := &domain.CalculationRun{DatasetID: d.ID, AsOf: d.AsOf, CreatedAt: time.Now().UTC(), Config: cfg, AIResponse: result.Raw, Items: []domain.Item{}}
 	var raw struct {
 		Recommendations []struct {
 			Calculation     json.RawMessage `json:"calculation"`
@@ -53,14 +53,15 @@ func (s *Service) createRemoteRun(ctx context.Context, cfg domain.RunConfig) (*d
 	}
 	for n, r := range result.Response.Recommendations {
 		p := d.Products[r.Code1C]
-		item := domain.Item{Code1C: p.Code1C, Article: p.Article, Name: p.Name, Supplier: p.Supplier, Decision: r.Action, Urgency: r.Urgency, RecommendedQuantity: *r.RecommendedQuantity, FinalQuantity: *r.RecommendedQuantity, EstimatedCost: r.EstimatedCost, UnitCost: r.EstimatedUnitCost, RequiresManualReview: r.RequiresManualReview, Confidence: r.Confidence, Calculation: raw.Recommendations[n].Calculation, Explanation: raw.Recommendations[n].Explanation, AnomalyAnalysis: raw.Recommendations[n].AnomalyAnalysis, Warnings: append([]domain.Diagnostic{}, p.Warnings...), Anomalies: []domain.Anomaly{}}
-		item.Warnings = append(item.Warnings, conflicts[p.Code1C]...)
+		item := domain.Item{Code1C: p.Code1C, Article: p.Article, Name: p.Name, Supplier: p.Supplier, Decision: r.Action, Urgency: r.Urgency, RecommendedQuantity: *r.RecommendedQuantity, FinalQuantity: *r.RecommendedQuantity, EstimatedCost: r.EstimatedCost, UnitCost: r.EstimatedUnitCost, RequiresManualReview: r.RequiresManualReview, Confidence: r.Confidence, Calculation: raw.Recommendations[n].Calculation, Explanation: raw.Recommendations[n].Explanation, AnomalyAnalysis: raw.Recommendations[n].AnomalyAnalysis, Anomalies: []domain.Anomaly{}}
+		item.Warnings = historyWarnings(p, d.AsOf, req.Settings, conflicts[p.Code1C])
+		item.Category, item.UpdatedAt = p.Category, run.CreatedAt
 		review := func(code, msg string) {
 			item.Warnings = append(item.Warnings, domain.Diagnostic{Code: code, Message: msg, Blocking: true, Code1C: p.Code1C})
 			item.RequiresManualReview = true
 		}
 		for _, w := range r.Warnings {
-			item.Warnings = append(item.Warnings, domain.Diagnostic{Code: w.Code, Message: w.Message})
+			item.Warnings = append(item.Warnings, domain.Diagnostic{Code: w.Code, Message: w.Message, Severity: w.Severity})
 		}
 		if !p.PresentFields["freeStock"] || !p.PresentFields["inTransit"] {
 			review("UNKNOWN_INVENTORY", "Неизвестен свободный остаток или полный объём товара в пути.")
@@ -120,6 +121,14 @@ func (s *Service) patchRemote(ctx context.Context, id, code string, patch domain
 			if item.Code1C != code {
 				continue
 			}
+			// This warning describes the current approval, not its edit history.
+			warnings := item.Warnings[:0]
+			for _, warning := range item.Warnings {
+				if warning.Code != "MANAGER_QUANTITY_NOT_MULTIPLE" {
+					warnings = append(warnings, warning)
+				}
+			}
+			item.Warnings = warnings
 			if patch.AnomalyDecision != nil {
 				if len(item.Anomalies) == 0 {
 					return fmt.Errorf("%w: у позиции нет кандидатов на аномалии", ErrInvalid)
@@ -127,10 +136,19 @@ func (s *Service) patchRemote(ctx context.Context, id, code string, patch domain
 				if item.AnomalyDecision != *patch.AnomalyDecision {
 					item.AnomalyDecision = *patch.AnomalyDecision
 					item.ApprovedQuantity = nil
+					item.Approved = false
 					item.FinalQuantity = item.RecommendedQuantity
 					item.Decision = "REVIEW"
 					item.RequiresManualReview = true
-					item.Warnings = append(item.Warnings, domain.Diagnostic{Code: "ANOMALY_DECISION_RECORDED", Message: "Решение сохранено отдельно. Контракт AI v1 не принимает решения менеджера для пересчёта; явно подтвердите окончательное количество.", Blocking: true})
+					found := false
+					for _, warning := range item.Warnings {
+						if warning.Code == "ANOMALY_DECISION_RECORDED" {
+							found = true
+						}
+					}
+					if !found {
+						item.Warnings = append(item.Warnings, domain.Diagnostic{Code: "ANOMALY_DECISION_RECORDED", Message: "Решение сохранено отдельно. Контракт AI v1 не принимает решения менеджера для пересчёта; явно подтвердите окончательное количество.", Blocking: true})
+					}
 				}
 			}
 			if patch.Comment != nil {
@@ -139,9 +157,15 @@ func (s *Service) patchRemote(ctx context.Context, id, code string, patch domain
 			if patch.ApprovedQuantity != nil {
 				v := *patch.ApprovedQuantity
 				item.ApprovedQuantity = &v
-				item.FinalQuantity = v
+				item.Approved = true // Legacy endpoint implicitly approves a quantity.
 			}
-			if item.ApprovedQuantity != nil {
+			if patch.Approved != nil {
+				item.Approved = *patch.Approved
+			}
+			item.UpdatedAt = time.Now().UTC()
+			item.FinalQuantity = item.RecommendedQuantity
+			if item.Approved && item.ApprovedQuantity != nil {
+				item.FinalQuantity = *item.ApprovedQuantity
 				if moq := d.Products[code].OrderMultiple; moq > 0 && math.Mod(item.FinalQuantity, float64(moq)) != 0 {
 					item.Warnings = append(item.Warnings, domain.Diagnostic{Code: "MANAGER_QUANTITY_NOT_MULTIPLE", Message: "Подтверждённое количество не кратно MOQ."})
 				}

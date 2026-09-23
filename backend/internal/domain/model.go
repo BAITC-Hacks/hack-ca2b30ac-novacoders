@@ -10,6 +10,7 @@ const Supplier = "SystemElectric"
 func DatasetDate() time.Time { return time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC) }
 
 type Diagnostic struct {
+	Severity string `json:"severity,omitempty"`
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 	File     string `json:"file,omitempty"`
@@ -121,6 +122,9 @@ type Breakdown struct {
 }
 
 type Item struct {
+	Category             string          `json:"category"`
+	Approved             bool            `json:"approved"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
 	Code1C               string          `json:"code1C"`
 	Article              string          `json:"article"`
 	Name                 string          `json:"name"`
@@ -155,6 +159,7 @@ type Summary struct {
 }
 
 type CalculationRun struct {
+	AsOf       time.Time       `json:"asOf"`
 	AIResponse json.RawMessage `json:"aiResponse,omitempty"`
 	ID         string          `json:"runId"`
 	DatasetID  string          `json:"datasetId"`
@@ -178,6 +183,7 @@ type RecommendationSettings struct {
 }
 
 type ManagerPatch struct {
+	Approved         *bool    `json:"approved"`
 	ApprovedQuantity *float64 `json:"approvedQuantity"`
 	AnomalyDecision  *string  `json:"anomalyDecision"`
 	Comment          *string  `json:"comment"`

@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     optimizeDeps: process.env.SUPPLYLENS_RESTRICTED_FS === '1' ? {
       noDiscovery: true,
-      include: ['react', 'react-dom/client', 'react/jsx-dev-runtime', 'react/jsx-runtime', 'lucide-react', 'recharts'],
+      include: ['react', 'react-dom/client', 'react/jsx-dev-runtime', 'react/jsx-runtime', 'lucide-react'],
       esbuildOptions: { plugins: [restrictedFs] },
     } : undefined,
     server: { port: 5173, strictPort: true, proxy: { '/api': { target: env.API_PROXY_TARGET || 'http://127.0.0.1:8080', changeOrigin: true } } },

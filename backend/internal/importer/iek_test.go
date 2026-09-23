@@ -83,3 +83,30 @@ func TestNumericDisplayFormattingDoesNotChangeValues(t *testing.T) {
 		t.Fatalf("formatted numbers corrupted: %+v", p)
 	}
 }
+
+func TestInvalidTransactionQuantityIsRetainedAsUnknownWithMonth(t *testing.T) {
+	files := demoReaders(t)
+	files["sales_transactions"] = workbook(t, [][]any{
+		{"Дата", "Номер", "Документ", "Код", "Номенклатура", "Склад", "Количество"},
+		{"2026-08-01", "SALE", "Док", "030200128_", "Товар", "Алматы", "ошибка"},
+		{"2026-08-01", "SALE", "Док", "030200128_", "Товар", "Алматы", 0},
+		{"2026-08-02", "RETURN", "Док", "030200128_", "Товар", "Алматы", -5},
+	})
+	d, err := Import(context.Background(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := d.Products["030200128_"]
+	if len(p.Transactions) != 3 || !p.Transactions[0].QuantityMissing || p.Transactions[1].QuantityMissing || p.Transactions[1].Quantity != 0 || p.Transactions[2].Quantity != -5 {
+		t.Fatalf("%+v", p.Transactions)
+	}
+	found := false
+	for _, w := range p.Warnings {
+		if w.Code == "INVALID_CELL" && w.Month == "2026-08" && w.Blocking {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("invalid quantity has no scoped blocking diagnostic")
+	}
+}

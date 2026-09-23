@@ -1,2 +1,3 @@
 /data/demo/
 /bin/
+!.env.example

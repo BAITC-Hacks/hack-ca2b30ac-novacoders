@@ -27,45 +27,24 @@ func main() {
 }
 func run() error {
 	dir := flag.String("dir", "", "Папка с шестью XLSX")
-	supplier := flag.String("supplier", domain.Supplier, "SystemElectric или IEK")
+	supplier := flag.String("supplier", "", "SystemElectric или IEK; по умолчанию определяется по имени папки")
 	api := flag.String("api", "http://127.0.0.1:8080", "URL Go Backend")
 	importOnly := flag.Bool("import-only", false, "Только импорт; без вызова AI")
 	flag.Parse()
+	if *supplier == "" {
+		switch strings.ToLower(filepath.Base(filepath.Clean(*dir))) {
+		case "iek":
+			*supplier = "IEK"
+		case "system_electric", "electric_system":
+			*supplier = domain.Supplier
+		}
+	}
 	if *dir == "" || (*supplier != domain.Supplier && *supplier != "IEK") {
 		return fmt.Errorf("пример: go run ./cmd/analyze -dir data/demo/iek -supplier IEK")
 	}
-	entries, err := os.ReadDir(*dir)
+	files, err := importer.DiscoverDirectory(*dir)
 	if err != nil {
 		return err
-	}
-	files := map[string]string{}
-	for _, e := range entries {
-		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".xlsx" || strings.HasPrefix(e.Name(), "~$") {
-			continue
-		}
-		name := strings.ToLower(e.Name())
-		field := ""
-		switch {
-		case strings.HasPrefix(name, "moq"):
-			field = "moq"
-		case strings.HasPrefix(name, "динамика"):
-			field = "sales_transactions"
-		case strings.HasPrefix(name, "ежемесячные остатки"):
-			field = "monthly_stock"
-		case strings.HasPrefix(name, "ежемесячные продажи"):
-			field = "monthly_sales"
-		case strings.HasPrefix(name, "сезонность"):
-			field = "seasonality"
-		case strings.HasPrefix(name, "товар в пути"), strings.HasPrefix(name, "путь"):
-			field = "in_transit"
-		}
-		if field == "" {
-			continue
-		}
-		if files[field] != "" {
-			return fmt.Errorf("неоднозначный выбор файла для %s", field)
-		}
-		files[field] = filepath.Join(*dir, e.Name())
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

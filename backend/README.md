@@ -1,270 +1,269 @@
-# SupplyLens backend
+# SupplyLens Go Backend
 
-Go 1.26.1+, Excelize, datasets и расчёты в памяти. Рабочая цепочка:
+Go 1.26.1+, Excelize, thread-safe in-memory store с mutex. Backend читает и
+проверяет Excel, нормализует данные, отправляет их в отдельный AI Service,
+сохраняет ответ и отдельные решения менеджера. БД и Docker не используются.
 
-```text
-6 XLSX → Go: чтение, проверка, нормализация
-       → POST AI_SERVICE_URL/v1/recommendations
-       → AI Service: формулы, аномалии, объяснения
-       → Go: сохранение ответа, решения менеджера, CSV
-```
-
-Go не вызывает OpenAI/NVIDIA напрямую. `cmd/api` всегда обращается к отдельному
-AI Service при создании расчёта. При его недоступности возвращается ошибка,
-импортированный dataset остаётся доступным для повторной попытки.
-
-## Запуск и загрузка папки
-
-Из корня репозитория:
+## Запуск
 
 ```bash
 cd backend
 AI_SERVICE_URL=http://127.0.0.1:8001 go run ./cmd/api
 ```
 
-AI Service нужно запустить отдельно на порту 8001. Его исходники и запуск этим
-репозиторием не управляются. Проверки:
+Из корня репозитория также работает:
 
 ```bash
-curl http://127.0.0.1:8080/healthz
-curl http://127.0.0.1:8001/health
+AI_SERVICE_URL=http://127.0.0.1:8001 go run ./backend/cmd/api
 ```
 
-Во втором терминале, из `backend/`, одна команда загружает шесть XLSX, получает
-`datasetId`, запускает расчёт и выводит результат JSON:
+Корневой `go.work` подключает модуль `backend` для Go и редактора. Если редактор
+показывает `a.localDataRoot undefined`, а `go test ./backend/...` проходит,
+проверьте несохранённую старую версию `backend/internal/transport/http/http.go`
+и выполните **Go: Restart Language Server** в палитре команд VS Code.
 
-```bash
-go run ./cmd/analyze -dir data/demo/iek -supplier IEK > /tmp/iek-result.json
-
-go run ./cmd/analyze -dir data/demo/electric_system -supplier SystemElectric > /tmp/system-result.json
-```
-
-В текущем workspace папка называется **electric_system**. Если ваша папка
-называется `system_electric`, укажите её фактический путь в `-dir`.
-Каждый поставщик импортируется отдельным dataset. CLI распознаёт файлы по началам
-названий: `MOQ`, `Динамика`, `Ежемесячные остатки`, `Ежемесячные продажи`,
-`Сезонность`, `Товар в пути` / `Путь`. Пробелы в именах поддерживаются;
-неоднозначный выбор файла вызывает ошибку.
-
-Для проверки Excel без работающего AI Service:
-
-```bash
-go run ./cmd/analyze -dir data/demo/iek -supplier IEK -import-only > /tmp/iek-import.json
-```
-
-CLI принимает `-api http://127.0.0.1:8080`. `cmd/demo` **создаёт синтетические
-файлы с четырьмя SKU**, а не анализирует существующие. Генерировать их можно в
-отдельную папку: `go run ./cmd/demo -out data/generated`.
-В командах Go обязательно `./cmd/api`, `./cmd/analyze`, `./cmd/demo` с `./`.
-
-## Конфигурация
-
-| Переменная | По умолчанию |
+| Переменная | Значение |
 |---|---|
-| `HTTP_ADDR` | `127.0.0.1:8080` |
-| `AI_SERVICE_URL` | `http://127.0.0.1:8001` — базовый URL, без `/v1/recommendations` |
-| `CORS_ORIGINS` | localhost/127.0.0.1 на портах 5173 и 3000, через запятую |
+| `AI_SERVICE_URL` | Обязательный базовый URL из environment, без `/v1/recommendations` |
+| `HTTP_ADDR` | По умолчанию `127.0.0.1:8080` |
+| `DATA_DEMO_DIR` | По умолчанию папка `data/demo` внутри backend; явный относительный путь отсчитывается от рабочей директории |
+| `CORS_ORIGINS` | По умолчанию localhost/127.0.0.1 на портах 5173 и 3000 |
 
-`.env` автоматически не читается. Авторизация AI Service в предоставленном
-контракте отсутствует; backend не отправляет API-ключи провайдеров.
-`/healthz` проверяет только Go-процесс. SIGINT/SIGTERM выполняет graceful shutdown.
-**После перезапуска теряются datasets, расчёты и подтверждения менеджера.**
-Пользовательской авторизации в этом MVP нет.
+Пример: `.env.example`. Go не загружает `.env` автоматически. Backend не содержит
+ключей и клиентов OpenAI/NVIDIA. `/healthz` проверяет только Go-процесс.
+AI Service запускается отдельно; исходников и команды его запуска в этом
+репозитории нет. Проверка: `curl http://127.0.0.1:8001/health`.
+Перезапуск Go удаляет импорты, расчёты и подтверждения. Пользовательская
+авторизация в MVP не реализована. SIGINT/SIGTERM завершает процесс корректно.
 
-## Endpoints Go Backend
-
-| Метод и путь | Принимает | Возвращает |
-|---|---|---|
-| `GET /healthz` | — | 200 `{"status":"ok"}` |
-| `POST /api/v1/import` | multipart: 6 файлов, `supplier` | 201: `datasetId`, количество товаров, диагностика |
-| `GET /api/v1/datasets/{datasetId}` | — | 200: та же сводка импорта |
-| `POST /api/v1/runs` | JSON: `datasetId`, `supplier`, необязательные `settings` | 201: сохранённый расчёт с ответом AI |
-| `GET /api/v1/runs/{runId}` | — | 200: расчёт и текущие подтверждения |
-| `PATCH /api/v1/runs/{runId}/items/{code1C}` | JSON: подтверждение количества, комментарий, решение об аномалиях | 200: обновлённый расчёт |
-| `POST /api/v1/runs/{runId}/approve-export` | — | 200: CSV только явно подтверждённых количеств > 0 |
+## Контракт с frontend
 
 ### Импорт
 
-Поля multipart: `moq`, `sales_transactions`, `monthly_stock`, `monthly_sales`,
-`seasonality`, `in_transit`; ровно один XLSX в каждом. `supplier` — `IEK` или
-`SystemElectric` (по умолчанию). Можно загружать из frontend обычным `FormData`.
+`POST /api/v1/imports`, multipart/form-data:
 
-Пример для реальных имён IEK, из `backend/`:
+| Поле | Источник |
+|---|---|
+| `moqFile` | MOQ/кратность |
+| `monthlySalesFile` | Месячные продажи |
+| `detailedSalesFile` | Детальные операции |
+| `monthlyStockFile` | Исторические остатки |
+| `seasonalityFile` | Сезонность |
+| `inventoryTransitFile` | Текущие остатки / партии в пути |
 
-```bash
-curl --fail-with-body -sS http://127.0.0.1:8080/api/v1/import \
-  -F 'supplier=IEK' \
-  -F 'moq=@data/demo/iek/MOQ  ИЭК.xlsx' \
-  -F 'sales_transactions=@data/demo/iek/Динамика продаж_2025-2026.xlsx' \
-  -F 'monthly_stock=@data/demo/iek/Ежемесячные остатки продукции за последние 2 года  ИЭК.xlsx' \
-  -F 'monthly_sales=@data/demo/iek/Ежемесячные продажи в количественном выражении за последние 2 года.xlsx' \
-  -F 'seasonality=@data/demo/iek/Сезонность ИЭК.xlsx' \
-  -F 'in_transit=@data/demo/iek/Путь ИЭК 22.09.2026.xlsx'
-```
+По одному `.xlsx` в каждом поле. Необязательный `supplier`: `SystemElectric`
+(по умолчанию) или `IEK`. Неизвестные поля отвергаются.
 
-Ответ содержит `diagnostics.processedRows`, `skippedTotalRows`,
-`productsWithoutMOQ`, `productsWithoutSales`, `productsWithoutCurrentStock`,
-`sourceConflicts`, `warnings`, `errors`. Ошибки отдельных ячеек не отменяют чтение
-всей книги; они остаются в диагностике и требуют проверки. Некорректная книга,
-отсутствие файла/обязательных заголовков — 422 без сохранения dataset.
-
-Коды сопоставляются точно как строки: ведущие нули и `_` сохраняются. Числовые
-значения читаются без Excel-форматирования, поэтому разделители тысяч не меняют
-количество. Отрицательные продажи сохраняются. Дубли SKU в месячных данных
-суммируются по `(code1C, month)`. Если хотя бы одна часть суммы неизвестна или
-невалидна, результат — `null`, не частичная сумма. Дубли детальных операций
-не объединяются; `Номер` документа передаётся как `transactionId`, при пустом
-номере используется `Документ`. Дубли MOQ/текущих остатков требуют проверки:
-сохраняется первая строка с блокирующей диагностикой.
-
-Для IEK поддержаны многострочные месячные заголовки, MOQ из `Мин. разр. к отгр.`,
-сезонность из первой таблицы `Месяц` + `СЕЗОННОСТЬ`, партии из колонок
-`поступление до ...`. Пустая партия означает **неизвестное количество**:
-если есть хотя бы одна такая ячейка, `inTransit: null`; сумма известных партий
-указывается только в диагностике. В данном наборе IEK нет текущего свободного
-остатка и себестоимости: `freeStock`, `totalStock`, `reservedStock`, `unitCost`
-передаются как `null`. Остаток на начало месяца не подставляется вместо текущего.
-
-### Запуск расчёта
-
-Минимальный запрос использует настройки v1 по умолчанию:
-
-```bash
-curl --fail-with-body -sS http://127.0.0.1:8080/api/v1/runs \
-  -H 'Content-Type: application/json' \
-  -d '{"datasetId":"dataset-001","supplier":"IEK"}'
-```
-
-Используйте ID из ответа импорта. Полный запрос с настройками:
+Ответ 201:
 
 ```json
 {
-  "datasetId": "dataset-001",
-  "supplier": "IEK",
-  "settings": {
-    "historyMonths": 12,
-    "forecastHorizonMonths": 2,
-    "leadTimeDays": 30,
-    "safetyStockDays": 14,
-    "excludePartialMonth": true,
-    "availableStockPolicy": "FREE_PLUS_IN_TRANSIT",
-    "anomalyReviewEnabled": true,
-    "explanationMode": "IMPORTANT_ONLY",
-    "maxAIExplanations": 50
-  }
+  "importId": "import-20260923-001",
+  "status": "READY",
+  "supplier": "SystemElectric",
+  "asOf": "2026-09-22",
+  "files": [{"type":"MOQ","fileName":"MOQ SystemElectric.xlsx","status":"VALID","rows":554}],
+  "summary": {"productsFound":554,"productsReady":467,"productsWithWarnings":87},
+  "warnings": []
 }
 ```
 
-Если передаёте `settings`, задавайте объект целиком. Поддержанные ограничения:
-history 1–120 месяцев, horizon 1–36 месяцев, lead time 1–365 дней, safety 0–365,
-max explanations 0–1000. В v1 поддержаны указанные выше policy и explanationMode.
-Для прежних клиентов разрешены верхнеуровневые `leadTimeDays`/`safetyDays`
-вместо `settings`; их нельзя смешивать. Дополнительные склады (`includeShowcase`,
-`includeTZStock`, `includeRetailStock`) нельзя включить в этом контракте.
+В настоящем ответе `files` содержит шесть записей. Возможные статусы файла:
+`VALID`/`WARNING`. `READY` означает, что dataset сохранён и доступен для анализа;
+это не отсутствие замечаний. `productsReady` — товары без найденных замечаний
+с нужными источниками, остальные учитываются в `productsWithWarnings`.
+`GET /api/v1/imports/{importId}` возвращает ту же проверку.
+Ошибки отдельных ячеек остаются в диагностике; некорректная книга/заголовки
+дают 422 без сохранения импорта.
 
-Backend сам формирует `schemaVersion: "1.0"`, UUID `requestId`,
-`asOfDate: "2026-09-22"` (дата среза этих файлов), `currency: "KZT"`,
-`sourceMeta` с именами файлов и числом прочитанных строк, а также массивы
-`products`, `monthlySales`, `monthlyStock`, `transactions`, `inventory`,
-`seasonality`. Даты операций — `YYYY-MM-DD`, месяцы — `YYYY-MM`.
-Отсутствующие значения передаются `null`, явные нули — `0`; отсутствующие месяцы
-не добавляются искусственно. Excel в AI Service не отправляется.
+Код 1С — точная строка, включая ведущие нули и `_`. Количества читаются из
+исходных значений Excel, без влияния отображаемых разделителей тысяч.
+Отрицательные возвраты сохраняются. Месячные дубли суммируются по `(code1C, month)`;
+если часть суммы отсутствует/невалидна, итог — `null`. Детальные строки не
+объединяются; отсутствующее количество операции — `null`. Дубли MOQ/текущих
+остатков требуют проверки: первая строка сохраняется с предупреждением.
 
-Ответ Go:
+IEK поддерживает многострочные заголовки, `Мин. разр. к отгр.`, таблицу
+`Месяц` + `СЕЗОННОСТЬ` и отдельные партии с `поступление до ...`.
+Пустая партия — неизвестное количество: если хотя бы одна партия пуста,
+общий `inTransit` неизвестен; сумма известных партий указана в предупреждении.
+В текущих IEK-файлах нет свободного/общего/зарезервированного текущего остатка
+и цены: в AI уходит `null`. Исторический остаток на начало месяца не заменяет
+текущий. Дата среза этого набора фиксирована: **22.09.2026**.
+
+### Рекомендации
+
+`POST /api/v1/imports/{importId}/recommendations`:
 
 ```json
 {
-  "runId": "run-001",
-  "datasetId": "dataset-001",
-  "createdAt": "2026-09-23T10:30:00Z",
-  "config": {},
-  "summary": {"buy":0,"noBuy":0,"review":1,"totalUnits":25,"estimatedCost":31250,"unpricedItems":0,"approvedItems":0},
-  "items": [],
-  "aiResponse": {
-    "schemaVersion":"1.0",
-    "requestId":"UUID запроса",
-    "runId":"ID AI Service",
-    "status":"COMPLETED_WITH_WARNINGS",
-    "summary": {},
-    "providers": {},
-    "recommendations": []
-  }
+  "forecastHorizonMonths": 2,
+  "leadTimeDays": 30,
+  "safetyStockDays": 14,
+  "excludePartialMonth": true
 }
 ```
 
-Это сокращённая схема; настоящий ответ содержит все позиции. Верхний `runId`
-принадлежит Go; `aiResponse.runId` — внешнему сервису. `aiResponse` сохраняется
-полностью и не меняется после решений менеджера, включая объяснения, статусы
-провайдеров, расчётные поля и предупреждения.
+Все четыре поля обязательны. Horizon 1–36 месяцев, lead time 1–365 дней,
+safety 0–365. Ноль и явный false сохраняются.
 
-`items` содержит товары для работы менеджера: `decision` (из AI `action`),
-`urgency`, `recommendedQuantity`, `approvedQuantity`, `finalQuantity`,
-`unitCost`, `estimatedCost`, `calculation`, `explanation`, `anomalyAnalysis`,
-`anomalies`, `warnings`, `requiresManualReview`, `confidence`, `managerComment`.
-Расчётные поля `calculation` передаются без пересчёта и сохраняют `null`.
-`finalQuantity` равен подтверждённому количеству, иначе предварительной рекомендации.
-Сводка Go суммирует текущие `finalQuantity`; `aiResponse.summary` — исходная сводка AI.
+Backend формирует контракт AI v1 с UUID `requestId`, `schemaVersion: "1.0"`,
+датой среза, KZT, метаданными файлов и массивами `products`, `monthlySales`,
+`monthlyStock`, `transactions`, `inventory`, `seasonality`. Дополнительные
+настройки: historyMonths 12, availableStockPolicy FREE_PLUS_IN_TRANSIT,
+anomalyReviewEnabled true, explanationMode IMPORTANT_ONLY, maxAIExplanations 50.
+Excel в AI Service не отправляется. Запрос: `POST {AI_SERVICE_URL}/v1/recommendations`.
+Клиент использует context, timeout **60 секунд**, лимит 50 MB и проверяет HTTP
+status, JSON, версию, requestId, полный набор SKU, действия и количества.
 
-Go проверяет версию, requestId, успешный статус, полный набор уникальных SKU,
-корректность действий и количества. Несовпадение `recommendedQuantity` и
-`calculation.roundedRequirement`, нарушение MOQ, неизвестные остатки и конфликты
-источников переводят локальную позицию в `REVIEW`, сохраняя исходные цифры AI.
-Статусы провайдеров `FALLBACK`/`FAILED` внутри успешно выполненного расчёта допустимы.
-Отказ всего AI Service не заменяется незаметно локальным расчётом.
+Ответ 201 и `GET /api/v1/recommendations/{runId}` имеют одинаковый формат:
 
-### Подтверждения и CSV
+- `runId`, `importId`, `supplier`, `asOf`, `createdAt`, `settings`;
+- `status`: COMPLETED / COMPLETED_WITH_WARNINGS;
+- `items`: code1C, article, name, category, supplier, decision, urgency,
+  recommendedQuantity, approvedQuantity (nullable), approved, finalQuantity,
+  updatedAt, estimatedCost (nullable), unitCost (nullable), calculation,
+  explanation, anomalyAnalysis, anomalyDecision, warnings, managerComment;
+- `summary`: buy, noBuy, review, totalUnits, estimatedCost, unpricedItems, approvedItems;
+- `orderSummary`: positions, totalUnits, estimatedCost (null, если часть цен неизвестна);
+- `warnings` и `providers`: предупреждения и статусы внешнего анализа.
 
-```bash
-curl --fail-with-body -sS -X PATCH \
-  http://127.0.0.1:8080/api/v1/runs/run-001/items/030200128_ \
-  -H 'Content-Type: application/json' \
-  -d '{"approvedQuantity":100,"comment":"Проверено менеджером"}'
+`summary` описывает текущий предварительный результат, а `orderSummary` —
+только подтверждённые количества > 0. `decision` не меняется на BUY от нажатия
+«Подтвердить»: оценка данных и решение менеджера хранятся отдельно.
+`calculation` и объяснения передаются без пересчёта, включая null.
+Несогласованные quantity/roundedRequirement, MOQ, стоимость и неизвестные
+остатки помечаются REVIEW. Исходный ответ AI хранится неизменным.
+Успешный fallback от AI с недоступным OpenAI/NVIDIA показывается с предупреждениями.
+При недоступности всего AI Service фиктивный run не создаётся; импорт сохраняется.
 
-curl --fail-with-body -sS -X POST \
-  http://127.0.0.1:8080/api/v1/runs/run-001/approve-export \
-  -o /tmp/approved.csv
+### Решение менеджера
+
+`PATCH /api/v1/recommendations/{runId}/items/{code1C}`:
+
+```json
+{
+  "approvedQuantity": 25,
+  "approved": true,
+  "anomalyDecision": "EXCLUDED",
+  "comment": "Разовая продажа подтверждена"
+}
 ```
 
-`approvedQuantity` — целое 0…1e12; 0 означает отказ от заказа. Подтверждение
-`REVIEW` должно быть явным. Экспорт сам не подтверждает позиции и ничего
-не отправляет поставщику. Изменение комментария сохраняет одобрение.
+Поля необязательны, но хотя бы одно обязательно. `approved: true` требует
+явного `approvedQuantity` в том же запросе. Количество — целое 0…1e12.
+Количество без `approved: true` сохраняется как черновик. `approved: false`
+снимает подтверждение. Подтверждённый ноль — отказ от заказа.
+Изменение комментария сохраняет предыдущее одобрение.
 
-`anomalyDecision: "EXCLUDE" | "KEEP"` сохраняется отдельно для всех кандидатов
-позиции и при изменении сбрасывает прежнее подтверждение. **Контракт AI v1 не
-принимает решения менеджера для повторного расчёта**: backend не пересчитывает
-исходную рекомендацию после этого PATCH. Возвращается
-`ANOMALY_DECISION_RECORDED`; итоговое количество нужно подтвердить явно.
-Для автоматического пересчёта с подтверждёнными исключениями потребуется
-расширить входной контракт AI. NVIDIA самостоятельно подтверждение не создаёт.
+`anomalyDecision`: EXCLUDED / INCLUDED / PENDING_REVIEW, для всех кандидатов
+одной позиции. Изменение решения сбрасывает предыдущее одобрение, если новое
+не передано в том же PATCH. **AI v1 не принимает решения менеджера для повторного
+расчёта**: исходная рекомендация не пересчитывается. Возвращается предупреждение
+ANOMALY_DECISION_RECORDED; конечное количество подтверждается явно.
 
-CSV: `supplier,code_1c,article,name,quantity,estimated_cost,decision,manager_comment`.
-Неизвестная стоимость — пустая ячейка. Текстовые формулы экранируются;
-при открытии в Excel импортируйте `code_1c` как текст.
+Ответ 200: `code1C`, `approvedQuantity`, `approved`, `updatedAt`.
+Frontend затем GET-читает актуальный run, включая серверные сводки.
+Все обновления store атомарны; сетевые вызовы выполняются вне mutex.
 
-## Ошибки, лимиты, проверки
+### Экспорт
 
-Ошибки: `{"error":{"code":"...","message":"...","details":{}}}`.
-400 — входной запрос; 404 — ресурс; 413 — размер; 415 — Content-Type;
-422 — импорт/валидация AI; 502 — отказ/невалидный ответ AI;
-503 `AI_SERVICE_UNAVAILABLE` — сервис недоступен; 504 — таймаут.
-AI-валидация сохраняет `requestId` и ошибки `fields` в `error.details`.
+`POST /api/v1/recommendations/{runId}/export`:
 
-20 MiB на XLSX, 121 MiB на multipart, 128 MiB распакованной книги,
-250 000 строк на лист, 1 MiB на входной JSON Go, 50 MB на запрос/ответ AI.
-HTTP AI timeout 50 секунд, контекст запроса Go — 60 секунд.
-Логи содержат этапы и счётчики без исходных таблиц и комментариев.
+```http
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="supplier-order.csv"
+```
+
+Колонки: supplier, code_1c, article, name, quantity, estimated_cost, decision,
+manager_comment. Только `approved: true` и количество > 0, включая REVIEW,
+явно одобренный менеджером. Пустой заказ содержит только заголовок.
+Неизвестная цена — пустая ячейка. Текстовые формулы экранируются.
+Экспорт ничего не подтверждает и не отправляет заказ поставщику.
+
+## CLI и совместимость
+
+### Наборы в data/demo
+
+При запуске из `backend/` сервер читает `data/demo/iek` и
+`data/demo/system_electric` (также поддерживается прежнее имя `electric_system`).
+Другой корень задаётся через `DATA_DEMO_DIR`. Поставщики импортируются отдельно;
+файлы непосредственно в корне `data/demo` не используются как запасной набор.
+Исходные книги не изменяются и не генерируются автоматически.
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/imports/local \
+  -H 'Content-Type: application/json' \
+  -d '{"supplier":"IEK"}'
+```
+
+Для второго набора передайте `"supplier":"SystemElectric"`. Ответ — тот же
+контракт `importId/status/files/summary/warnings`, что у multipart-импорта.
+Далее вызовите `/api/v1/imports/{importId}/recommendations` с параметрами расчёта.
+Эта же последовательность доступна в UI через «Загрузить из data/demo».
+Endpoint принимает только поставщика; произвольный путь передать нельзя.
+Отсутствующий файл, неоднозначное имя папки или два файла одного типа дают 422.
+
+В проверенном локальном наборе SystemElectric сейчас **4 синтетических товара**,
+в IEK — **3185 товаров**. Для реального расчёта SystemElectric замените все шесть
+файлов соответствующими отчётами поставщика. Подробности: [аудит данных](docs/data-audit.md).
+
+### Загрузка папки через CLI
+
+Для существующего `cmd/analyze` сохранены отдельные legacy-маршруты:
+`POST /api/v1/import`, `GET /api/v1/datasets/{id}`, `POST /api/v1/runs`,
+`GET /api/v1/runs/{id}`, `PATCH /api/v1/runs/{id}/items/{code}`,
+`POST /api/v1/runs/{id}/approve-export`. Их прежний формат не смешивается с
+новым контрактом. Только legacy PATCH подразумевает одобрение при передаче
+approvedQuantity без approved. Frontend использует исключительно новые маршруты.
+
+```bash
+# Из backend/, после запуска Go и AI Service:
+go run ./cmd/analyze -dir data/demo/iek -supplier IEK > /tmp/iek-result.json
+go run ./cmd/analyze -dir data/demo/electric_system -supplier SystemElectric > /tmp/system-result.json
+# Только импорт, без AI:
+go run ./cmd/analyze -dir data/demo/iek -supplier IEK -import-only
+```
+
+Укажите фактическое имя папки, если оно другое. `cmd/demo` — отдельный генератор
+синтетических XLSX: `go run ./cmd/demo -out data/generated`. Эти данные нужны
+тестам и не подставляются в production-flow. Пакеты локальных формул остаются
+покрыты тестами, но `cmd/api` получает рекомендации через AI Service.
+
+Для папок `iek`, `system_electric`, `electric_system` параметр `-supplier` можно
+не указывать: он определяется по имени папки. Для произвольной папки задайте его явно.
+
+Сверка сохраняет все замечания в импорте. При расчёте блокирующие замечания по
+месяцам учитываются только внутри `historyMonths` с учётом `excludePartialMonth`.
+Неизвестные MOQ/текущие остатки требуют проверки независимо от периода.
+Пропущенный месяц продаж отличается от месяца с продажами 0; нехватка истории
+вызывает `INCOMPLETE_SALES_HISTORY`. Неизвестное количество операции сохраняется
+как `null`, включая некорректную числовую ячейку с диагностикой. `SOURCE_CONFLICT`
+содержит обе суммы, а `SOURCE_COMPARISON_UNAVAILABLE` означает невозможность сверки.
+Полная исходная история передаётся в AI; прогнозные формулы остаются в AI Service.
+
+## Ошибки и проверки
+
+Ошибка: `{"error":{"code":"...","message":"...","details":{}}}`.
+400 — запрос, 404 — ресурс, 413 — размер, 415 — Content-Type,
+422 — данные/валидация AI, 502 — некорректный ответ/отказ AI, 503 — недоступность,
+504 — таймаут. Валидация AI сохраняет requestId/fields в details; внутренние
+ошибки и ключи не раскрываются.
+
+20 MiB на файл, 121 MiB на multipart, 128 MiB распакованной книги, 250 000 строк
+на лист, 1 MiB JSON frontend, 50 MB JSON AI. Контекст Go-запроса 75 секунд.
 
 ```bash
 go test ./...
 go test -race ./...
 go vet ./...
 go build ./...
+# Необязательная проверка реальных локальных IEK-файлов:
+SUPPLYLENS_IEK_DIR="$PWD/data/demo/iek" go test ./internal/recommendation -run TestRealIEKContract -v
+# Оба набора из папок поставщиков, без вызова AI:
+SUPPLYLENS_DATA_DIR="$PWD/data/demo" go test ./internal/recommendation -run TestLocalDatasetsContract -v
 ```
 
-Пакеты `internal/forecast` и `internal/anomaly` с проверенными локальными
-формулами сохранены; `cmd/api` не использует их для построения рекомендаций.
-Сверка источников и суммирование результатов остаются задачами backend.
-Тесты покрывают импорт обоих форматов, разделители тысяч, нули/null/возвраты,
-дубли, HTTP-контракт с тестовым AI Service, ошибки/таймауты, согласованность
-ответа, отдельные подтверждения и экспорт. Проверка с настоящим AI Service
-требует запущенного сервиса на `AI_SERVICE_URL`.
+`contracts_test.go` проверяет полный новый HTTP-flow, BUY/NO_BUY/REVIEW,
+реальные XLSX fixture, fallback, черновики, явный ноль, отмену/сброс подтверждения,
+CSV, CORS, конкурентные обращения и недоступность AI без подстановки результата.

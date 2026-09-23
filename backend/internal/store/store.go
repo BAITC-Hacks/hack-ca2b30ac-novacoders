@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/BAITC-Hacks/hack-ca2b30ac-novacoders/internal/domain"
 )
@@ -44,7 +45,7 @@ func (s *Store) AddDataset(d *domain.Dataset) (*domain.Dataset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextDataset++
-	copy.ID = fmt.Sprintf("dataset-%03d", s.nextDataset)
+	copy.ID = fmt.Sprintf("import-%s-%03d", time.Now().UTC().Format("20060102"), s.nextDataset)
 	s.datasets[copy.ID] = copy
 	return clone(copy)
 }
