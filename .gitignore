@@ -1,0 +1,64 @@
+# =========================
+# СЕКРЕТЫ И API КЛЮЧИ (САМОЕ ВАЖНОЕ!)
+# =========================
+.env
+.env.*
+.env.local
+*.pem
+secrets.json
+
+# =========================
+# GOLANG (Backend)
+# =========================
+# Бинарные файлы (результат компиляции)
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+# Папка с зависимостями (если используете go mod vendor)
+vendor/
+
+# =========================
+# NODE.JS / REACT / VITE (Frontend)
+# =========================
+# Зависимости
+node_modules/
+/.pnp
+.pnp.js
+
+# Собранный продакшен билд
+/dist/
+/build/
+
+# Логи ошибок
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Кэш Vite и других сборщиков
+.eslintcache
+.vite/
+
+# =========================
+# IDE И ОПЕРАЦИОННЫЕ СИСТЕМЫ
+# =========================
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Редакторы (VS Code, GoLand, WebStorm)
+.vscode/
+.idea/
+*.swp
+*.swo
